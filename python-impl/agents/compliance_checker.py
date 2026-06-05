@@ -154,13 +154,16 @@ class ComplianceCheckerAgent:
     @trace_agent_call("compliance_full_check")
     async def full_check(self, content: str) -> ComplianceResult:
         """
-        两阶段合规审查：
-        1. 规则引擎快速检查（毫秒级）
-        2. 若规则通过，再进行LLM深度审查
+        优化后的两阶段合规审查：
+        1. 规则引擎快速检查
+        2. 仅在存在中低风险可疑内容时，才进入LLM深度审查
         """
         rule_result = await self.rule_check(content)
 
-        if not rule_result.passed and rule_result.risk_level in ("high", "critical"):
+        if rule_result.passed:
+            return rule_result
+
+        if rule_result.risk_level in ("high", "critical"):
             return rule_result
 
         llm_result = await self.llm_check(content)

@@ -6,8 +6,8 @@ Supervisor编排Agent — 中央协调者
 
 from __future__ import annotations
 
-import operator
-from typing import Annotated, Any, Literal, TypedDict
+import os
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -15,9 +15,8 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 
-from agents.intent_router import IntentRouterAgent
 from agents.knowledge_rag import KnowledgeRAGAgent
-from agents.ticket_handler import TicketHandlerAgent
+from agents.ticket_handler import TicketHandlerAgent, TicketStore
 from agents.compliance_checker import ComplianceCheckerAgent
 from memory.working_memory import WorkingMemory
 from memory.short_term import ShortTermMemory
@@ -54,7 +53,14 @@ SUPERVISOR_SYSTEM_PROMPT = """你是一个智能客服系统的Supervisor（主�
 - ticket_handler: 工单创建和查询
 - compliance_checker: 合规审查和敏感词检测
 
-根据用户消息，决定下一步路由到哪个Agent。
+路由原则：
+- 只要用户是在查询、追问、更新、确认某个具体工单、订单、申请单、业务办理记录的状态、进度、结果、编号或历史，优先路由到 ticket_handler。
+- 如果用户消息中出现类似 TK-20260604-ABC123 的工单号，必须路由到 ticket_handler。
+- 像“我的工单怎么样了”“之前那个退款单处理到哪了”“帮我查一下订单状态”这类与具体业务单据处理进度相关的问题，应路由到 ticket_handler。
+- knowledge_rag 只用于回答通用知识问题，例如产品介绍、费率、政策、流程、所需材料、规则说明等，不用于回答具体工单实例的状态。
+- 如果请求涉及敏感或违规内容，路由到 compliance_checker。
+
+根据用户消息，决定下一步路由到哪个Agent。你的输出必须严格只返回以下之一：knowledge_rag, ticket_handler, compliance_checker。
 """
 
 
@@ -67,18 +73,16 @@ class SupervisorNode:
 
     @trace_agent_call("supervisor")
     async def route_decision(self, state: AgentState) -> AgentState:
-        """分析用户意图，决定路由"""
+        """分析用户意图，并通过LLM决定路由"""
         messages = state["messages"]
         session_id = state.get("session_id", "default")
-
         context = self.working_memory.get_context(session_id)
-
         routing_prompt = [
             SystemMessage(content=SUPERVISOR_SYSTEM_PROMPT),
             SystemMessage(content=f"当前工作记忆上下文: {context}"),
             *messages,
             HumanMessage(content=(
-                "请分析用户的最新消息，返回应该路由到的Agent名称。"
+                "请结合用户最新消息和上下文，判断应该路由到哪个Agent。"
                 "只返回以下之一: knowledge_rag, ticket_handler, compliance_checker"
             )),
         ]
@@ -112,7 +116,7 @@ class SupervisorNode:
         else:
             result_parts = []
             for agent_name, result in sub_results.items():
-                if result:
+                if isinstance(result, str) and result.strip():
                     result_parts.append(result)
             final_response = "\n\n".join(result_parts) if result_parts else "抱歉，暂时无法处理您的请求，请稍后重试。"
 
@@ -148,6 +152,7 @@ def create_supervisor_graph(
     working_memory: WorkingMemory | None = None,
     short_term_memory: ShortTermMemory | None = None,
     long_term_memory: LongTermMemory | None = None,
+    ticket_store: TicketStore | None = None,
     enable_checkpointing: bool = True,
 ) -> StateGraph:
     """
@@ -161,18 +166,35 @@ def create_supervisor_graph(
         working_memory: 工作记忆
         short_term_memory: 短期记忆
         long_term_memory: 长期记忆
+        ticket_store: 工单存储
         enable_checkpointing: 是否启用检查点（支持断点恢复）
     """
     if llm is None:
-        llm = ChatOpenAI(model="gpt-4o", temperature=0)
+        model_name = os.getenv("MODEL_NAME", "qwen3.7-plus")
+        api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("DASHSCOPE_BASE_URL") or os.getenv("OPENAI_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+        if api_key:
+            os.environ.setdefault("OPENAI_API_KEY", api_key)
+
+        llm_kwargs = {
+            "model": model_name,
+            "temperature": 0,
+            "base_url": base_url,
+        }
+        if api_key:
+            llm_kwargs["api_key"] = api_key
+
+        llm = ChatOpenAI(**llm_kwargs)
     if working_memory is None:
         working_memory = WorkingMemory()
+    if ticket_store is None:
+        ticket_store = TicketStore()
 
     supervisor = SupervisorNode(llm, working_memory)
 
-    intent_router = IntentRouterAgent(llm)
     knowledge_agent = KnowledgeRAGAgent(llm, long_term_memory)
-    ticket_agent = TicketHandlerAgent(llm)
+    ticket_agent = TicketHandlerAgent(llm, ticket_store=ticket_store)
     compliance_agent = ComplianceCheckerAgent(llm)
 
     graph = StateGraph(AgentState)

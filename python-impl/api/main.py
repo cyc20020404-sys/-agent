@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agents.supervisor import create_supervisor_graph
+from agents.ticket_handler import TicketStore
 from memory.working_memory import WorkingMemory
 from memory.short_term import ShortTermMemory
 from memory.long_term import LongTermMemory
@@ -30,6 +31,7 @@ short_term_memory = ShortTermMemory(redis_url=os.getenv("REDIS_URL", "redis://lo
 long_term_memory = LongTermMemory(index_path=os.getenv("FAISS_INDEX_PATH", "./vector_store/faiss_index"))
 mcp_server = create_default_tools(MCPToolServer())
 metrics = AgentMetrics()
+ticket_store = TicketStore()
 graph = None
 
 
@@ -38,15 +40,20 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     global graph
 
+    otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+    if otlp_endpoint:
+        otlp_endpoint = otlp_endpoint.strip() or None
+
     init_tracer(
         service_name=os.getenv("OTEL_SERVICE_NAME", "smart-cs-multi-agent"),
-        otlp_endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+        otlp_endpoint=otlp_endpoint,
     )
 
     graph = create_supervisor_graph(
         working_memory=working_memory,
         short_term_memory=short_term_memory,
         long_term_memory=long_term_memory,
+        ticket_store=ticket_store,
     )
 
     long_term_memory.add_document(
@@ -92,6 +99,22 @@ class ChatResponse(BaseModel):
     session_id: str
     intent: str
     compliance_passed: bool
+
+
+class TicketDetailResponse(BaseModel):
+    ticket_id: str
+    type: str
+    priority: str
+    status: str
+    summary: str
+    details: str
+    user_id: str
+    assigned_queue: str
+    current_stage: str
+    handoff_mode: str
+    last_event: str
+    created_at: str
+    updated_at: str
 
 
 @app.post("/api/chat", response_model=ChatResponse)
@@ -172,6 +195,15 @@ async def get_metrics():
         "agent_metrics": metrics.get_summary(),
         "tool_call_log": mcp_server.get_call_log(last_n=20),
     }
+
+
+@app.get("/api/tickets/{ticket_id}", response_model=TicketDetailResponse)
+async def get_ticket(ticket_id: str):
+    """获取结构化工单详情"""
+    ticket = ticket_store.query(ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail=f"未找到工单号 {ticket_id}")
+    return TicketDetailResponse(**ticket)
 
 
 @app.get("/health")

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from enum import Enum
@@ -31,6 +32,40 @@ class TicketPriority(str, Enum):
     MEDIUM = "medium"
     HIGH = "high"
     URGENT = "urgent"
+
+
+QUEUE_CONFIG: dict[str, dict[str, str]] = {
+    "refund": {
+        "assigned_queue": "refund_workflow",
+        "current_stage": "refund_intake",
+        "handoff_mode": "automatic",
+    },
+    "claim": {
+        "assigned_queue": "claim_review_queue",
+        "current_stage": "claim_review",
+        "handoff_mode": "manual_review",
+    },
+    "account_open": {
+        "assigned_queue": "account_open_workflow",
+        "current_stage": "account_verification",
+        "handoff_mode": "automatic",
+    },
+    "account_change": {
+        "assigned_queue": "account_service_queue",
+        "current_stage": "change_request_review",
+        "handoff_mode": "manual_review",
+    },
+    "complaint": {
+        "assigned_queue": "manual_support",
+        "current_stage": "manual_triage",
+        "handoff_mode": "manual_review",
+    },
+    "general": {
+        "assigned_queue": "manual_support",
+        "current_stage": "manual_triage",
+        "handoff_mode": "manual_review",
+    },
+}
 
 
 TICKET_SYSTEM_PROMPT = """你是一个专业的工单处理Agent，负责处理客户的业务办理请求。
@@ -82,6 +117,10 @@ class TicketStore:
             "summary": summary,
             "details": details,
             "user_id": user_id,
+            "assigned_queue": "unassigned",
+            "current_stage": "waiting_assignment",
+            "handoff_mode": "pending",
+            "last_event": "ticket_created",
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
         }
@@ -101,17 +140,92 @@ class TicketStore:
             ticket["updated_at"] = datetime.now().isoformat()
         return ticket
 
+    def update_ticket(self, ticket_id: str, **fields: Any) -> dict | None:
+        ticket = self._tickets.get(ticket_id)
+        if ticket:
+            ticket.update(fields)
+            ticket["updated_at"] = datetime.now().isoformat()
+        return ticket
+
 
 class TicketHandlerAgent:
     """工单处理Agent"""
+
+    TICKET_ID_PATTERN = r"TK-\d{8}-[A-Z0-9]{6}"
 
     def __init__(self, llm: ChatOpenAI, ticket_store: TicketStore | None = None):
         self.llm = llm
         self.ticket_store = ticket_store or TicketStore()
 
+    def _extract_ticket_id(self, user_message: str) -> str | None:
+        match = re.search(self.TICKET_ID_PATTERN, user_message)
+        return match.group(0) if match else None
+
+    def _get_queue_config(self, ticket_type: str) -> dict[str, str]:
+        return QUEUE_CONFIG.get(ticket_type, QUEUE_CONFIG["general"])
+
+    def _label_queue(self, queue_name: str) -> str:
+        return {
+            "refund_workflow": "退款处理工作流",
+            "claim_review_queue": "理赔审核队列",
+            "account_open_workflow": "开户处理工作流",
+            "account_service_queue": "账户服务队列",
+            "manual_support": "人工客服队列",
+            "unassigned": "待分配",
+        }.get(queue_name, queue_name)
+
+    def _label_stage(self, stage_name: str) -> str:
+        return {
+            "waiting_assignment": "等待分配",
+            "refund_intake": "退款受理",
+            "claim_review": "理赔审核",
+            "account_verification": "开户资料校验",
+            "change_request_review": "账户变更审核",
+            "manual_triage": "人工分诊",
+        }.get(stage_name, stage_name)
+
+    def _label_handoff_mode(self, handoff_mode: str) -> str:
+        return {
+            "automatic": "自动处理",
+            "manual_review": "人工处理",
+            "pending": "待处理",
+        }.get(handoff_mode, handoff_mode)
+
+    def _handoff_ticket(self, ticket: dict) -> dict:
+        queue_config = self._get_queue_config(ticket["type"])
+        assigned_ticket = self.ticket_store.update_ticket(
+            ticket["ticket_id"],
+            assigned_queue=queue_config["assigned_queue"],
+            current_stage=queue_config["current_stage"],
+            handoff_mode=queue_config["handoff_mode"],
+            last_event="ticket_handed_off",
+        )
+        if not assigned_ticket:
+            return ticket
+
+        processing_ticket = self.ticket_store.update_status(
+            ticket["ticket_id"],
+            TicketStatus.PROCESSING.value,
+        )
+        if processing_ticket:
+            processing_ticket["last_event"] = "ticket_processing_started"
+            return processing_ticket
+        return assigned_ticket
+
     @trace_agent_call("ticket_analyze")
     async def analyze_request(self, user_message: str) -> dict:
         """分析用户需求，提取工单信息"""
+        extracted_ticket_id = self._extract_ticket_id(user_message)
+        if extracted_ticket_id:
+            return {
+                "action": "query",
+                "ticket_id": extracted_ticket_id,
+                "ticket_type": "general",
+                "priority": "low",
+                "summary": user_message[:100],
+                "details": user_message,
+            }
+
         messages = [
             SystemMessage(content=TICKET_SYSTEM_PROMPT),
             HumanMessage(content=f"用户消息: {user_message}"),
@@ -121,15 +235,20 @@ class TicketHandlerAgent:
 
         import json
         try:
-            return json.loads(response.content)
+            ticket_info = json.loads(response.content)
         except json.JSONDecodeError:
-            return {
+            ticket_info = {
                 "action": "create",
                 "ticket_type": "general",
                 "priority": "medium",
                 "summary": user_message[:100],
                 "details": user_message,
             }
+
+        if ticket_info.get("action") == "query" and "ticket_id" not in ticket_info and extracted_ticket_id:
+            ticket_info["ticket_id"] = extracted_ticket_id
+
+        return ticket_info
 
     @trace_agent_call("ticket_create")
     async def create_ticket(self, ticket_info: dict, user_id: str) -> str:
@@ -141,6 +260,7 @@ class TicketHandlerAgent:
             details=ticket_info.get("details", ""),
             user_id=user_id,
         )
+        ticket = self._handoff_ticket(ticket)
 
         priority_label = {
             "low": "普通", "medium": "中等", "high": "高", "urgent": "紧急"
@@ -152,8 +272,12 @@ class TicketHandlerAgent:
             f"📝 类型: {ticket['type']}\n"
             f"⚡ 优先级: {priority_label}\n"
             f"📄 摘要: {ticket['summary']}\n"
+            f"📬 处理队列: {self._label_queue(ticket['assigned_queue'])}\n"
+            f"🧭 当前环节: {self._label_stage(ticket['current_stage'])}\n"
+            f"🤝 处理方式: {self._label_handoff_mode(ticket['handoff_mode'])}\n"
+            f"📊 当前状态: 处理中\n"
             f"🕐 创建时间: {ticket['created_at']}\n\n"
-            f"我们将尽快处理您的请求，请保存好工单号以便后续查询。"
+            f"您的请求已进入后续处理流程，请保存好工单号以便后续查询。"
         )
 
     @trace_agent_call("ticket_query")
@@ -177,6 +301,9 @@ class TicketHandlerAgent:
             f"📋 工单号: {ticket['ticket_id']}\n"
             f"📊 状态: {status_label}\n"
             f"📝 类型: {ticket['type']}\n"
+            f"📬 处理队列: {self._label_queue(ticket['assigned_queue'])}\n"
+            f"🧭 当前环节: {self._label_stage(ticket['current_stage'])}\n"
+            f"🤝 处理方式: {self._label_handoff_mode(ticket['handoff_mode'])}\n"
             f"📄 摘要: {ticket['summary']}\n"
             f"🕐 创建时间: {ticket['created_at']}\n"
             f"🔄 更新时间: {ticket['updated_at']}"
@@ -192,12 +319,14 @@ class TicketHandlerAgent:
             return state
 
         last_message = messages[-1].content
+        extracted_ticket_id = self._extract_ticket_id(last_message)
         ticket_info = await self.analyze_request(last_message)
 
         action = ticket_info.get("action", "create")
+        ticket_id = ticket_info.get("ticket_id") or extracted_ticket_id
 
-        if action == "query" and "ticket_id" in ticket_info:
-            result = await self.query_ticket(ticket_info["ticket_id"])
+        if action == "query" and ticket_id:
+            result = await self.query_ticket(ticket_id)
         else:
             result = await self.create_ticket(ticket_info, user_id)
 
