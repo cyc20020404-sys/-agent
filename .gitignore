@@ -45,7 +45,18 @@ docker-compose.override.yml
 *.log
 logs/
 
+# Node
+node_modules/
+
 # Data
 *.db
 *.sqlite3
 vector_store/
+
+# Large static assets (images, uploads)
+base-image/
+uploads/
+
+# Large binaries (installers, dev tools)
+*.exe
+*.msi

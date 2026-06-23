@@ -24,10 +24,10 @@ from memory.long_term import LongTermMemory
 from tracing.otel_config import trace_agent_call
 
 
-# ─── 状态定义 ───
+# --- State definition ---
 
 class AgentState(TypedDict):
-    """Supervisor编排的全局状态"""
+    """Supervisor global state"""
     messages: Annotated[list[BaseMessage], add_messages]
     user_id: str
     session_id: str
@@ -37,35 +37,51 @@ class AgentState(TypedDict):
     final_response: str
     current_agent: str
     retry_count: int
+    auth_token: str  # JWT token, passed through to MCP tools for backend API calls
+    auth_type: str   # "admin" or "user", determines available tools and permissions
 
 
-# ─── Supervisor节点 ───
+# --- Supervisor Node ---
 
-SUPERVISOR_SYSTEM_PROMPT = """你是一个智能客服系统的Supervisor（主管编排Agent）。
-你的职责是：
-1. 分析用户意图，决定分发给哪个子Agent处理
-2. 汇总子Agent的处理结果，生成最终回复
-3. 确保所有回复都经过合规审查
+SUPERVISOR_SYSTEM_PROMPT = """You are the Supervisor of a food delivery customer service system.
 
-可用的子Agent：
-- intent_router: 意图识别和分类
-- knowledge_rag: 知识库检索和回答
-- ticket_handler: 工单创建和查询
-- compliance_checker: 合规审查和敏感词检测
+Your responsibilities:
+1. Analyze user intent and decide which sub-agent to route to
+2. Synthesize sub-agent results into a final response
+3. Ensure all responses go through compliance review
+4. Adapt to the user type (admin vs consumer)
 
-路由原则：
-- 只要用户是在查询、追问、更新、确认某个具体工单、订单、申请单、业务办理记录的状态、进度、结果、编号或历史，优先路由到 ticket_handler。
-- 如果用户消息中出现类似 TK-20260604-ABC123 的工单号，必须路由到 ticket_handler。
-- 像“我的工单怎么样了”“之前那个退款单处理到哪了”“帮我查一下订单状态”这类与具体业务单据处理进度相关的问题，应路由到 ticket_handler。
-- knowledge_rag 只用于回答通用知识问题，例如产品介绍、费率、政策、流程、所需材料、规则说明等，不用于回答具体工单实例的状态。
-- 如果请求涉及敏感或违规内容，路由到 compliance_checker。
+Available sub-agents:
+- knowledge_rag: Knowledge base Q&A (menu info, policies, FAQ)
+- ticket_handler: Order query and order actions
+- compliance_checker: Compliance review and sensitive content detection
 
-根据用户消息，决定下一步路由到哪个Agent。你的输出必须严格只返回以下之一：knowledge_rag, ticket_handler, compliance_checker。
+Admin tools (via ticket_handler, admin only):
+- order_query: Search all orders by ID, phone, status
+- order_action: Confirm/reject/cancel/deliver/complete any order
+- menu_query: Query dishes, setmeals, categories
+- business_data: Business statistics and dashboard
+- shop_status: Get/set shop open/closed status
+
+Consumer tools (via ticket_handler, consumer only):
+- user_order_query: Search own orders by status, view order detail
+- user_order_action: Cancel order, remind merchant, re-order
+- user_menu_query: Browse menu (dishes, setmeals, categories)
+- user_shop_info: Check shop status, phone, address
+
+Routing rules:
+- If user asks about their own orders (status, detail, "my orders"), route to ticket_handler
+- If user asks about menu, dishes, recommendations, policies, FAQ, route to knowledge_rag
+- If user asks to cancel/remind/re-order their own orders, route to ticket_handler
+- If user (consumer) asks to confirm/reject/deliver/set shop status → route to knowledge_rag with explanation that this is admin-only
+- If request contains sensitive/inappropriate content, route to compliance_checker
+
+Based on the user message, decide the next agent. Output ONLY one of: knowledge_rag, ticket_handler, compliance_checker.
 """
 
 
 class SupervisorNode:
-    """Supervisor决策节点"""
+    """Supervisor decision node"""
 
     def __init__(self, llm: ChatOpenAI, working_memory: WorkingMemory):
         self.llm = llm
@@ -73,17 +89,19 @@ class SupervisorNode:
 
     @trace_agent_call("supervisor")
     async def route_decision(self, state: AgentState) -> AgentState:
-        """分析用户意图，并通过LLM决定路由"""
+        """Analyze user intent and decide routing via LLM"""
         messages = state["messages"]
         session_id = state.get("session_id", "default")
+        auth_type = state.get("auth_type", "admin")
         context = self.working_memory.get_context(session_id)
         routing_prompt = [
             SystemMessage(content=SUPERVISOR_SYSTEM_PROMPT),
-            SystemMessage(content=f"当前工作记忆上下文: {context}"),
+            SystemMessage(content=f"Current user type: {auth_type} ({'administrator with full privileges' if auth_type == 'admin' else 'consumer - can only query own orders, cancel, remind, re-order, and browse menu'})"),
+            SystemMessage(content=f"Working memory: {context}"),
             *messages,
             HumanMessage(content=(
-                "请结合用户最新消息和上下文，判断应该路由到哪个Agent。"
-                "只返回以下之一: knowledge_rag, ticket_handler, compliance_checker"
+                "Based on the user's latest message and context, decide which agent to route to. "
+                "Output ONLY one of: knowledge_rag, ticket_handler, compliance_checker"
             )),
         ]
 
@@ -104,21 +122,21 @@ class SupervisorNode:
 
     @trace_agent_call("supervisor_synthesize")
     async def synthesize_response(self, state: AgentState) -> AgentState:
-        """汇总子Agent结果，生成最终回复"""
+        """Synthesize sub-agent results into final response"""
         sub_results = state.get("sub_results", {})
         compliance_passed = state.get("compliance_passed", True)
 
         if not compliance_passed:
             final_response = (
-                "抱歉，您的请求涉及敏感内容，已转交人工客服处理。"
-                "工单编号已自动生成，请留意后续通知。"
+                "Sorry, your request involves sensitive content and has been "
+                "transferred to human customer service. Please check for updates later."
             )
         else:
             result_parts = []
             for agent_name, result in sub_results.items():
                 if isinstance(result, str) and result.strip():
                     result_parts.append(result)
-            final_response = "\n\n".join(result_parts) if result_parts else "抱歉，暂时无法处理您的请求，请稍后重试。"
+            final_response = "\n\n".join(result_parts) if result_parts else "Sorry, unable to process your request at this time. Please try again later."
 
         return {
             **state,
@@ -127,10 +145,10 @@ class SupervisorNode:
         }
 
 
-# ─── 路由函数 ───
+# --- Routing functions ---
 
 def route_to_agent(state: AgentState) -> str:
-    """根据意图路由到对应Agent节点"""
+    """Route to the correct agent node based on intent"""
     intent = state.get("intent", "knowledge_rag")
     route_map = {
         "knowledge_rag": "knowledge_rag",
@@ -141,11 +159,11 @@ def route_to_agent(state: AgentState) -> str:
 
 
 def should_check_compliance(state: AgentState) -> str:
-    """所有回复都需经过合规审查"""
+    """All responses must go through compliance review"""
     return "compliance_check"
 
 
-# ─── 构建Graph ───
+# --- Build Graph ---
 
 def create_supervisor_graph(
     llm: ChatOpenAI | None = None,
@@ -153,21 +171,23 @@ def create_supervisor_graph(
     short_term_memory: ShortTermMemory | None = None,
     long_term_memory: LongTermMemory | None = None,
     ticket_store: TicketStore | None = None,
+    mcp_server: Any = None,
     enable_checkpointing: bool = True,
 ) -> StateGraph:
     """
-    构建Supervisor编排的多Agent StateGraph。
+    Build the Supervisor-orchestrated multi-agent StateGraph.
 
-    这是整个系统的核心入口，将4个子Agent通过有向图连接起来，
-    由Supervisor节点负责路由决策和结果汇总。
+    This is the core entry point of the system, connecting 4 sub-agents
+    via a directed graph. The Supervisor node handles routing and synthesis.
 
     Args:
-        llm: 语言模型实例
-        working_memory: 工作记忆
-        short_term_memory: 短期记忆
-        long_term_memory: 长期记忆
-        ticket_store: 工单存储
-        enable_checkpointing: 是否启用检查点（支持断点恢复）
+        llm: Language model instance
+        working_memory: Working memory
+        short_term_memory: Short-term memory
+        long_term_memory: Long-term memory
+        ticket_store: Ticket store
+        mcp_server: MCP tool server
+        enable_checkpointing: Enable checkpointing (supports resume)
     """
     if llm is None:
         model_name = os.getenv("MODEL_NAME", "qwen3.7-plus")
@@ -194,7 +214,7 @@ def create_supervisor_graph(
     supervisor = SupervisorNode(llm, working_memory)
 
     knowledge_agent = KnowledgeRAGAgent(llm, long_term_memory)
-    ticket_agent = TicketHandlerAgent(llm, ticket_store=ticket_store)
+    ticket_agent = TicketHandlerAgent(llm, ticket_store=ticket_store, mcp_server=mcp_server)
     compliance_agent = ComplianceCheckerAgent(llm)
 
     graph = StateGraph(AgentState)

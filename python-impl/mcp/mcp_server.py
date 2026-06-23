@@ -191,97 +191,14 @@ class MCPToolServer:
 
 
 def create_default_tools(server: MCPToolServer) -> MCPToolServer:
-    """注册默认的MCP工具集"""
+    """
+    [已废弃] 注册默认的模拟工具集。
 
-    @server.register(
-        name="order_query",
-        description="查询订单信息，支持按订单号或用户ID查询",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "order_id": {"type": "string", "description": "订单号"},
-                "user_id": {"type": "string", "description": "用户ID"},
-            },
-        },
-        category="order",
-    )
-    async def order_query(order_id: str = "", user_id: str = "") -> dict:
-        return {
-            "order_id": order_id or "ORD-20260401-001",
-            "status": "shipped",
-            "amount": 299.00,
-            "product": "智能理财产品A",
-            "created_at": "2026-04-01T10:00:00",
-        }
+    实际工具现由 mcp/backend_tools.py::create_backend_tools() 提供，
+    对接 Spring Boot 外卖后端真实 API。
 
-    @server.register(
-        name="knowledge_search",
-        description="搜索企业知识库，返回相关文档片段",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "搜索查询"},
-                "top_k": {"type": "integer", "description": "返回数量", "default": 3},
-            },
-            "required": ["query"],
-        },
-        category="knowledge",
-    )
-    async def knowledge_search(query: str, top_k: int = 3) -> list[dict]:
-        return [
-            {"content": f"关于'{query}'的知识库文档片段", "source": "FAQ.md", "score": 0.95},
-        ]
-
-    @server.register(
-        name="ticket_create",
-        description="创建客服工单",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "title": {"type": "string"},
-                "description": {"type": "string"},
-                "priority": {"type": "string", "enum": ["low", "medium", "high", "urgent"]},
-                "category": {"type": "string"},
-            },
-            "required": ["title", "description"],
-        },
-        category="ticket",
-    )
-    async def ticket_create(title: str, description: str, priority: str = "medium", category: str = "general") -> dict:
-        import uuid
-        return {
-            "ticket_id": f"TK-{uuid.uuid4().hex[:8].upper()}",
-            "title": title,
-            "status": "created",
-            "priority": priority,
-        }
-
-    @server.register(
-        name="risk_check",
-        description="风控接口 — 检查交易/操作的风险等级",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "user_id": {"type": "string"},
-                "action": {"type": "string"},
-                "amount": {"type": "number"},
-            },
-            "required": ["user_id", "action"],
-        },
-        category="compliance",
-    )
-    async def risk_check(user_id: str, action: str, amount: float = 0.0) -> dict:
-        risk_level = "low"
-        if amount > 50000:
-            risk_level = "high"
-        elif amount > 10000:
-            risk_level = "medium"
-
-        return {
-            "user_id": user_id,
-            "action": action,
-            "risk_level": risk_level,
-            "requires_manual_review": risk_level == "high",
-        }
-
-    return server
+    保留此函数仅为向后兼容测试场景。
+    """
+    from mcp.backend_client import BackendClient
+    from mcp.backend_tools import create_backend_tools
+    return create_backend_tools(server, BackendClient())

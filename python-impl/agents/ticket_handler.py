@@ -35,29 +35,34 @@ class TicketPriority(str, Enum):
 
 
 QUEUE_CONFIG: dict[str, dict[str, str]] = {
-    "refund": {
-        "assigned_queue": "refund_workflow",
-        "current_stage": "refund_intake",
+    "order_query": {
+        "assigned_queue": "order_workflow",
+        "current_stage": "order_lookup",
         "handoff_mode": "automatic",
     },
-    "claim": {
-        "assigned_queue": "claim_review_queue",
-        "current_stage": "claim_review",
-        "handoff_mode": "manual_review",
-    },
-    "account_open": {
-        "assigned_queue": "account_open_workflow",
-        "current_stage": "account_verification",
+    "order_action": {
+        "assigned_queue": "order_workflow",
+        "current_stage": "order_processing",
         "handoff_mode": "automatic",
     },
-    "account_change": {
-        "assigned_queue": "account_service_queue",
-        "current_stage": "change_request_review",
-        "handoff_mode": "manual_review",
+    "menu_query": {
+        "assigned_queue": "menu_workflow",
+        "current_stage": "menu_lookup",
+        "handoff_mode": "automatic",
     },
-    "complaint": {
-        "assigned_queue": "manual_support",
-        "current_stage": "manual_triage",
+    "business_data": {
+        "assigned_queue": "report_workflow",
+        "current_stage": "data_lookup",
+        "handoff_mode": "automatic",
+    },
+    "shop_status": {
+        "assigned_queue": "shop_workflow",
+        "current_stage": "status_management",
+        "handoff_mode": "automatic",
+    },
+    "general": {
+        "assigned_queue": "general_support",
+        "current_stage": "triage",
         "handoff_mode": "manual_review",
     },
     "general": {
@@ -68,38 +73,43 @@ QUEUE_CONFIG: dict[str, dict[str, str]] = {
 }
 
 
-TICKET_SYSTEM_PROMPT = """你是一个专业的工单处理Agent，负责处理客户的业务办理请求。
+TICKET_SYSTEM_PROMPT = """你是一个专业的外卖订单处理Agent，负责处理订单查询和订单操作。
 
 你的职责：
-1. 分析用户需求，判断是否需要创建工单
-2. 提取工单关键信息（类型、优先级、描述）
-3. 创建工单并返回工单号
-4. 查询现有工单状态
+1. 分析用户需求，判断是查询订单还是执行订单操作
+2. 提取关键信息（订单ID、手机号、操作类型等）
+3. 通过MCP工具调用后端API完成操作
 
-工单类型：
-- refund: 退款申请
-- claim: 理赔申请
-- account_open: 开户申请
-- account_change: 账户变更
-- complaint: 投诉工单
-- general: 通用工单
+支持的操作类型：
+- order_query: 查询订单（按订单ID、手机号、状态、订单编号等条件）
+- order_action: 订单操作（接单confirm、拒单reject、取消cancel、派送delivery、完成complete）
+  - confirm 接单不需要reason
+  - reject 拒单需要 rejectionReason
+  - cancel 取消需要 cancelReason
+  - delivery 派送不需要reason
+  - complete 完成不需要reason
+- menu_query: 查询菜品/套餐/分类
+- business_data: 查询营业数据（概览、订单统计、TOP10）
+- shop_status: 查询或设置店铺营业状态
 
-优先级判断规则：
-- urgent: 资金安全、账户被盗
-- high: 退款超时、理赔争议
-- medium: 常规业务办理
-- low: 信息咨询类
+订单状态码：
+- 1: 待付款
+- 2: 待接单
+- 3: 已接单
+- 4: 派送中
+- 5: 已完成
+- 6: 已取消
 
-请以JSON格式返回工单信息：
+请以JSON格式返回：
 {
-    "action": "create|query|update",
-    "ticket_type": "refund|claim|account_open|...",
-    "priority": "low|medium|high|urgent",
-    "summary": "工单摘要",
-    "details": "详细描述"
+    "action": "order_query|order_action|menu_query|business_data|shop_status",
+    "operation": "具体的子操作类型",
+    "order_id": 订单ID数字,
+    "phone": "手机号",
+    "reason": "拒单或取消的原因",
+    "summary": "用户需求的简短总结"
 }
 """
-
 
 class TicketStore:
     """内存工单存储（生产环境应替换为数据库）"""
@@ -153,8 +163,9 @@ class TicketHandlerAgent:
 
     TICKET_ID_PATTERN = r"TK-\d{8}-[A-Z0-9]{6}"
 
-    def __init__(self, llm: ChatOpenAI, ticket_store: TicketStore | None = None):
+    def __init__(self, llm: ChatOpenAI, ticket_store: TicketStore | None = None, mcp_server=None):
         self.llm = llm
+        self.mcp_server = mcp_server
         self.ticket_store = ticket_store or TicketStore()
 
     def _extract_ticket_id(self, user_message: str) -> str | None:
@@ -214,121 +225,142 @@ class TicketHandlerAgent:
 
     @trace_agent_call("ticket_analyze")
     async def analyze_request(self, user_message: str) -> dict:
-        """分析用户需求，提取工单信息"""
-        extracted_ticket_id = self._extract_ticket_id(user_message)
-        if extracted_ticket_id:
-            return {
-                "action": "query",
-                "ticket_id": extracted_ticket_id,
-                "ticket_type": "general",
-                "priority": "low",
-                "summary": user_message[:100],
-                "details": user_message,
-            }
+        """分析用户需求，提取外卖订单操作信息"""
+        # 检测订单ID模式（数字类型）
+        import re
+        order_id_match = re.search(r'(?:订单|ID|id|编号)\s*[:：#]?\s*(\d+)', user_message)
+        phone_match = re.search(r'1[3-9]\d{9}', user_message)
+        number_match = re.search(r'(?:编号|单号|number)[:：\s]*(\w+)', user_message, re.IGNORECASE)
+
+        extracted: dict = {}
+        if order_id_match:
+            extracted["order_id"] = int(order_id_match.group(1))
+        if phone_match:
+            extracted["phone"] = phone_match.group()
+        if number_match:
+            extracted["number"] = number_match.group(1)
 
         messages = [
             SystemMessage(content=TICKET_SYSTEM_PROMPT),
-            HumanMessage(content=f"用户消息: {user_message}"),
+            HumanMessage(content=f"用户消息: {user_message}\n已提取的上下文: {extracted}"),
         ]
 
-        response = await self.llm.ainvoke(messages)
-
-        import json
         try:
+            response = await self.llm.ainvoke(messages)
+            import json
             ticket_info = json.loads(response.content)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, Exception):
             ticket_info = {
-                "action": "create",
-                "ticket_type": "general",
-                "priority": "medium",
+                "action": "order_query",
                 "summary": user_message[:100],
-                "details": user_message,
             }
 
-        if ticket_info.get("action") == "query" and "ticket_id" not in ticket_info and extracted_ticket_id:
-            ticket_info["ticket_id"] = extracted_ticket_id
+        # 合并提取的订单ID
+        if "order_id" not in ticket_info and "order_id" in extracted:
+            ticket_info["order_id"] = extracted["order_id"]
+        if "phone" not in ticket_info and "phone" in extracted:
+            ticket_info["phone"] = extracted["phone"]
 
         return ticket_info
 
-    @trace_agent_call("ticket_create")
-    async def create_ticket(self, ticket_info: dict, user_id: str) -> str:
-        """创建工单"""
-        ticket = self.ticket_store.create(
-            ticket_type=ticket_info.get("ticket_type", "general"),
-            priority=ticket_info.get("priority", "medium"),
-            summary=ticket_info.get("summary", ""),
-            details=ticket_info.get("details", ""),
-            user_id=user_id,
-        )
-        ticket = self._handoff_ticket(ticket)
+    @trace_agent_call("ticket_execute")
+    async def execute_action(self, ticket_info: dict, user_id: str, auth_token: str = "", auth_type: str = "admin") -> str:
+        """通过MCP工具执行订单操作（区分admin/user工具）"""
+        action = ticket_info.get("action", "order_query")
 
-        priority_label = {
-            "low": "普通", "medium": "中等", "high": "高", "urgent": "紧急"
-        }.get(ticket["priority"], "中等")
+        if self.mcp_server is None:
+            return "MCP工具服务未初始化，无法执行操作。"
 
-        return (
-            f"工单已创建成功！\n\n"
-            f"📋 工单号: {ticket['ticket_id']}\n"
-            f"📝 类型: {ticket['type']}\n"
-            f"⚡ 优先级: {priority_label}\n"
-            f"📄 摘要: {ticket['summary']}\n"
-            f"📬 处理队列: {self._label_queue(ticket['assigned_queue'])}\n"
-            f"🧭 当前环节: {self._label_stage(ticket['current_stage'])}\n"
-            f"🤝 处理方式: {self._label_handoff_mode(ticket['handoff_mode'])}\n"
-            f"📊 当前状态: 处理中\n"
-            f"🕐 创建时间: {ticket['created_at']}\n\n"
-            f"您的请求已进入后续处理流程，请保存好工单号以便后续查询。"
-        )
+        # ── 用户端：只能调用 user_* 工具 ──
+        if auth_type == "user":
+            if action == "order_query":
+                result = await self.mcp_server.call_tool("user_order_query", {
+                    "order_id": ticket_info.get("order_id"),
+                    "status": ticket_info.get("status"),
+                    "page": 1,
+                    "pageSize": 10,
+                    "token": auth_token,
+                })
+            elif action == "order_action":
+                op = ticket_info.get("operation", "reminder")
+                if op in ("confirm", "reject", "delivery", "complete"):
+                    return "抱歉，该操作（接单/拒单/派送/完成）仅限管理后台进行。您可以使用：取消订单、催单、再来一单。"
+                result = await self.mcp_server.call_tool("user_order_action", {
+                    "action": op,
+                    "order_id": ticket_info.get("order_id"),
+                    "token": auth_token,
+                })
+            elif action == "menu_query":
+                result = await self.mcp_server.call_tool("user_menu_query", {
+                    "query_type": ticket_info.get("operation", "all"),
+                    "token": auth_token,
+                })
+            elif action == "shop_status":
+                result = await self.mcp_server.call_tool("user_shop_info", {
+                    "info_type": ticket_info.get("operation", "all"),
+                    "token": auth_token,
+                })
+            else:
+                result = await self.mcp_server.call_tool("user_order_query", {
+                    "page": 1, "pageSize": 10, "token": auth_token,
+                })
+        # ── 管理员端：使用 admin 工具 ──
+        else:
+            if action == "order_query":
+                result = await self.mcp_server.call_tool("order_query", {
+                    "order_id": ticket_info.get("order_id"),
+                    "phone": ticket_info.get("phone"),
+                    "number": ticket_info.get("number"),
+                    "status": ticket_info.get("status"),
+                    "page": 1, "pageSize": 10, "token": auth_token,
+                })
+            elif action == "order_action":
+                result = await self.mcp_server.call_tool("order_action", {
+                    "action": ticket_info.get("operation", "confirm"),
+                    "order_id": ticket_info.get("order_id"),
+                    "reason": ticket_info.get("reason", ""),
+                    "token": auth_token,
+                })
+            elif action == "menu_query":
+                result = await self.mcp_server.call_tool("menu_query", {
+                    "query_type": ticket_info.get("operation", "all"),
+                    "token": auth_token,
+                })
+            elif action == "business_data":
+                result = await self.mcp_server.call_tool("business_data", {
+                    "data_type": ticket_info.get("operation", "overview"),
+                    "token": auth_token,
+                })
+            elif action == "shop_status":
+                result = await self.mcp_server.call_tool("shop_status", {
+                    "action": ticket_info.get("operation", "get"),
+                    "status": ticket_info.get("status"),
+                    "token": auth_token,
+                })
+            else:
+                result = await self.mcp_server.call_tool("order_query", {
+                    "phone": ticket_info.get("phone"),
+                    "page": 1, "pageSize": 10, "token": auth_token,
+                })
 
-    @trace_agent_call("ticket_query")
-    async def query_ticket(self, ticket_id: str) -> str:
-        """查询工单状态"""
-        ticket = self.ticket_store.query(ticket_id)
-        if not ticket:
-            return f"未找到工单号 {ticket_id}，请确认工单号是否正确。"
-
-        status_label = {
-            "created": "已创建",
-            "processing": "处理中",
-            "pending_review": "待审核",
-            "resolved": "已解决",
-            "closed": "已关闭",
-            "escalated": "已升级",
-        }.get(ticket["status"], ticket["status"])
-
-        return (
-            f"工单查询结果：\n\n"
-            f"📋 工单号: {ticket['ticket_id']}\n"
-            f"📊 状态: {status_label}\n"
-            f"📝 类型: {ticket['type']}\n"
-            f"📬 处理队列: {self._label_queue(ticket['assigned_queue'])}\n"
-            f"🧭 当前环节: {self._label_stage(ticket['current_stage'])}\n"
-            f"🤝 处理方式: {self._label_handoff_mode(ticket['handoff_mode'])}\n"
-            f"📄 摘要: {ticket['summary']}\n"
-            f"🕐 创建时间: {ticket['created_at']}\n"
-            f"🔄 更新时间: {ticket['updated_at']}"
-        )
+        if result.success:
+            return str(result.result)
+        return f"操作失败：{result.error}"
 
     @trace_agent_call("ticket_handler_process")
     async def process(self, state: dict[str, Any]) -> dict[str, Any]:
-        """作为Graph节点处理状态"""
+        """作为Graph节点处理状态——通过MCP工具调用后端API"""
         messages = state.get("messages", [])
         user_id = state.get("user_id", "anonymous")
+        auth_token = state.get("auth_token", "")
+        auth_type = state.get("auth_type", "admin")
 
         if not messages:
             return state
 
         last_message = messages[-1].content
-        extracted_ticket_id = self._extract_ticket_id(last_message)
         ticket_info = await self.analyze_request(last_message)
-
-        action = ticket_info.get("action", "create")
-        ticket_id = ticket_info.get("ticket_id") or extracted_ticket_id
-
-        if action == "query" and ticket_id:
-            result = await self.query_ticket(ticket_id)
-        else:
-            result = await self.create_ticket(ticket_info, user_id)
+        result = await self.execute_action(ticket_info, user_id, auth_token, auth_type)
 
         return {
             **state,

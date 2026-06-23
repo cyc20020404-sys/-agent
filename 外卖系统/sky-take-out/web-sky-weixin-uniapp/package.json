@@ -1,0 +1,18 @@
+{
+  "dependencies": {
+    "@dcloudio/uni-cli-shared": "^2.0.0",
+    "@dcloudio/uni-h5": "^2.0.0",
+    "@dcloudio/uni-ui": "^1.4.14",
+    "@dcloudio/webpack-uni-mp-loader": "^2.0.2-5000720260410001",
+    "@dcloudio/webpack-uni-pages-loader": "^2.0.2-5000720260410001",
+    "copy-webpack-plugin": "^5.1.2"
+  },
+  "devDependencies": {
+    "@dcloudio/uni-mp-weixin": "^2.0.2-5000720260410001",
+    "@dcloudio/vue-cli-plugin-uni": "^2.0.0",
+    "@vue/cli-service": "^4.5.19",
+    "sass": "1.32",
+    "sass-loader": "^10.5.2",
+    "vue-template-compiler": "2.6"
+  }
+}

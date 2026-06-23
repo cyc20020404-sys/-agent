@@ -1,0 +1,26 @@
+**/target/
+.idea
+*.iml
+*.class
+#*Test.java
+#**/test/
+
+# Uni-app specific ignores
+unpackage/
+.automator/
+.sourcemap/
+dist/
+.tmp/
+
+# Build output directories
+/build/
+/out/
+
+# Log files
+*.log
+
+# Environment files
+.env*
+
+# IDE specific files
+.editorconfig

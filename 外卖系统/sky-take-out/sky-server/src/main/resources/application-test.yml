@@ -1,0 +1,37 @@
+server:
+  port: 8080
+
+sky:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    host: localhost
+    port: 3306
+    database: sky_take_out
+    username: root
+    password: 123456
+  redis:
+    host: localhost
+    port: 6379
+    password: 123456
+    database: 1
+  oss:
+    upload-path: /var/project_asset/sky-take-out/uploads/images
+  wechat:
+    appid: wx00f166b3c613fdf0
+    secret: 3fcd8c9b7f9cc7129a7f3e7b495c6318
+    mchid:
+    mchSerialNo:
+    privateKeyFilePath:
+    apiV3Key:
+    weChatPayCertFilePath:
+    notifyUrl:
+    refundNotifyUrl:
+  shop:
+    delivery-fee: 5.21
+    shop-address: 江西南昌
+    phone: 18279383840
+    shop-name: 苍穹食堂
+    shop-id: 1
+    description: 10年老店,苍穹食堂为顾客打造专业的大众化美食外送餐饮
+  baidu:
+    ak: your-ak
