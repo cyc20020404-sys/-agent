@@ -5,6 +5,12 @@ MCP 后端工具 — 对接 Spring Boot 外卖系统真实 API
 每个工具的 handler 通过 BackendClient 调用 Spring Boot 管理端 API。
 """
 from __future__ import annotations
+import re
+
+
+def _mask_phone(text: str) -> str:
+    """Mask phone numbers: 13812345678 -> 138****5678"""
+    return re.sub(r'(1[3-9]\d)\d{4}(\d{4})', r'\1****\2', text)
 
 from datetime import datetime
 from typing import Any
@@ -51,7 +57,7 @@ def _format_orders(records: list[dict]) -> str:
             f"   手机号: {phone} | 地址: {address}\n"
         )
 
-    return "\n".join(lines)
+    return _mask_phone("\n".join(lines))
 
 
 def _format_order_detail(order: dict) -> str:
@@ -88,7 +94,7 @@ def _format_order_detail(order: dict) -> str:
             price = item.get("amount", 0)
             lines.append(f"  - {dish_name} x{qty} ¥{price:.2f}")
 
-    return "\n".join(lines)
+    return _mask_phone("\n".join(lines))
 
 
 # ─── 工具注册入口 ───

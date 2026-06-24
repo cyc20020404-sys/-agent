@@ -35,7 +35,7 @@ long_term_memory = LongTermMemory(index_path=os.getenv("FAISS_INDEX_PATH", "./ve
 
 # 注册管理员端工具（token header）和用户端工具（authentication header）
 mcp_server = create_backend_tools(MCPToolServer(), BackendClient())
-mcp_server = create_user_backend_tools(mcp_server, BackendClient(header_name="authentication"))
+mcp_server = create_user_backend_tools(mcp_server, BackendClient(base_url="http://localhost:8080/user", header_name="authentication"))
 metrics = AgentMetrics()
 ticket_store = TicketStore()
 graph = None

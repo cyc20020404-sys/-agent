@@ -6,10 +6,16 @@ MCP 用户端工具 — 对接 Spring Boot 外卖系统 /user/* API
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from mcp.backend_client import BackendClient, BackendAuthError, BackendApiError
 from mcp.mcp_server import MCPToolServer
+
+def _mask_phone(text: str) -> str:
+    """Mask phone numbers: 13812345678 -> 138****5678"""
+    return re.sub(r'(1[3-9]\d)\d{4}(\d{4})', r'\1****\2', text)
+
 
 # 订单状态码映射
 ORDER_STATUS_MAP: dict[int, str] = {
@@ -38,7 +44,7 @@ def _format_user_orders(records: list[dict]) -> str:
             f"{i}. 订单 #{order_id} | {number}\n"
             f"   状态: {status} | 金额: ¥{amount:.2f} | 时间: {order_time}"
         )
-    return "\n".join(lines)
+    return _mask_phone("\n".join(lines))
 
 
 def _format_user_order_detail(order: dict) -> str:
@@ -70,7 +76,7 @@ def _format_user_order_detail(order: dict) -> str:
             price = item.get("amount", 0)
             lines.append(f"  - {name} x{qty} ¥{price:.2f}")
 
-    return "\n".join(lines)
+    return _mask_phone("\n".join(lines))
 
 
 # ─── 工具注册入口 ───
