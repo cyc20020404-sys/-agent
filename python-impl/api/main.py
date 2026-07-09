@@ -4,19 +4,23 @@ FastAPI入口 — 提供REST API + SSE流式响应
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agents.supervisor import create_supervisor_graph
 from agents.ticket_handler import TicketStore
+from agents.human_handoff import HumanHandoffStore
+from agents.ws_manager import ws_manager
 from memory.working_memory import WorkingMemory
 from memory.short_term import ShortTermMemory
 from memory.long_term import LongTermMemory
@@ -38,6 +42,7 @@ mcp_server = create_backend_tools(MCPToolServer(), BackendClient())
 mcp_server = create_user_backend_tools(mcp_server, BackendClient(base_url="http://localhost:8080/user", header_name="authentication"))
 metrics = AgentMetrics()
 ticket_store = TicketStore()
+handoff_store = HumanHandoffStore()
 graph = None
 
 
@@ -61,6 +66,7 @@ async def lifespan(app: FastAPI):
         long_term_memory=long_term_memory,
         ticket_store=ticket_store,
         mcp_server=mcp_server,
+        handoff_store=handoff_store,
     )
 
     # 外卖FAQ知识库
@@ -112,6 +118,7 @@ class ChatResponse(BaseModel):
     session_id: str
     intent: str
     compliance_passed: bool
+    escalated: bool = False
 
 
 class TicketDetailResponse(BaseModel):
@@ -130,36 +137,22 @@ class TicketDetailResponse(BaseModel):
     updated_at: str
 
 
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat(
-    request: ChatRequest,
-    token_hdr: str | None = Header(None, alias="token"),
-    auth_hdr: str | None = Header(None, alias="authentication"),
-):
-    """主聊天接口"""
-    if graph is None:
-        raise HTTPException(status_code=503, detail="系统初始化中")
-
-    session_id = request.session_id or str(uuid.uuid4())
-
-    # 优先 token header（管理员），其次 authentication header（用户），最后 body
+def _parse_auth(token_hdr, auth_hdr, body_token):
+    """统一鉴权解析"""
     if token_hdr:
-        auth_token = token_hdr
-        auth_type = "admin"
+        return token_hdr, "admin"
     elif auth_hdr:
-        auth_token = auth_hdr
-        auth_type = "user"
+        return auth_hdr, "user"
     else:
-        auth_token = request.token
-        auth_type = "admin"  # body token 默认视为管理员
+        return body_token or "", "admin"
 
-    await short_term_memory.add_message(session_id, "user", request.message)
 
+def _build_initial_state(message, user_id, session_id, auth_token, auth_type):
+    """构建 Graph 初始状态"""
     from langchain_core.messages import HumanMessage
-
-    initial_state = {
-        "messages": [HumanMessage(content=request.message)],
-        "user_id": request.user_id,
+    return {
+        "messages": [HumanMessage(content=message)],
+        "user_id": user_id,
         "session_id": session_id,
         "intent": "",
         "sub_results": {},
@@ -171,6 +164,85 @@ async def chat(
         "auth_type": auth_type,
     }
 
+
+# ── SSE 辅助 ────────────────────────────────────────────────
+
+def _sse(data: dict) -> str:
+    """将一个 dict 格式化为 SSE data 行"""
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def _run_graph_with_events(initial_state: dict, config: dict, queue: asyncio.Queue):
+    """
+    运行 LangGraph 并在关键节点推送事件到 queue。
+    利用 graph.astream_events() (LangGraph >= 0.2) 捕获每个节点完成事件。
+    """
+    if graph is None:
+        await queue.put({"type": "error", "text": "系统未初始化"})
+        await queue.put({"type": "done"})
+        return
+
+    try:
+        # 先用手动模式：逐步执行 nodes，每步推事件
+        # LangGraph 的 astream 在 subgraph 内部可能不支持 v1 事件，
+        # 所以采用手动推进 + 状态快照
+        await queue.put({"type": "status", "text": "正在分析您的问题..."})
+
+        # 方法：直接调用 ainvoke, 但在前后推事件
+        # 因为没有 graph.astream_events 的可靠支持，
+        # 我们用 asyncio.create_task 在后台跑，同时先推状态
+        result = await graph.ainvoke(initial_state, config=config)
+
+        intent = result.get("intent", "unknown")
+        compliance = result.get("compliance_passed", True)
+        final = result.get("final_response", "系统处理异常，请稍后重试")
+
+        await queue.put({
+            "type": "meta",
+            "intent": intent,
+            "compliance_passed": compliance,
+            "escalated": intent == "human_handoff",
+        })
+        await queue.put({"type": "content", "text": final})
+        await queue.put({"type": "done"})
+
+    except Exception as e:
+        await queue.put({"type": "error", "text": f"处理失败: {str(e)}"})
+        await queue.put({"type": "done"})
+
+
+# ── API Routes ──────────────────────────────────────────────
+
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat(
+    request: ChatRequest,
+    token_hdr: str | None = Header(None, alias="token"),
+    auth_hdr: str | None = Header(None, alias="authentication"),
+):
+    """主聊天接口（非流式，兼容旧版）"""
+    if graph is None:
+        raise HTTPException(status_code=503, detail="系统初始化中")
+
+    session_id = request.session_id or str(uuid.uuid4())
+    auth_token, auth_type = _parse_auth(token_hdr, auth_hdr, request.token)
+
+    await short_term_memory.add_message(session_id, "user", request.message)
+
+    # Check if session is already escalated to human agent
+    if handoff_store.is_escalated(session_id):
+        escalated_session = handoff_store.get(session_id)
+        if escalated_session and escalated_session.status == "active":
+            handoff_store.user_message(session_id, request.message)
+
+        return ChatResponse(
+            response=".",
+            session_id=session_id,
+            intent="human_handoff",
+            compliance_passed=True,
+            escalated=True,
+        )
+
+    initial_state = _build_initial_state(request.message, request.user_id, session_id, auth_token, auth_type)
     config = {"configurable": {"thread_id": session_id}}
 
     try:
@@ -179,7 +251,6 @@ async def chat(
         raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
 
     final_response = result.get("final_response", "系统处理异常，请稍后重试")
-
     await short_term_memory.add_message(session_id, "assistant", final_response)
 
     return ChatResponse(
@@ -187,14 +258,105 @@ async def chat(
         session_id=session_id,
         intent=result.get("intent", "unknown"),
         compliance_passed=result.get("compliance_passed", True),
+        escalated=result.get("intent") == "human_handoff",
+    )
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(
+    request: ChatRequest,
+    token_hdr: str | None = Header(None, alias="token"),
+    auth_hdr: str | None = Header(None, alias="authentication"),
+):
+    """SSE 流式聊天接口"""
+    if graph is None:
+        raise HTTPException(status_code=503, detail="系统初始化中")
+
+    session_id = request.session_id or str(uuid.uuid4())
+    auth_token, auth_type = _parse_auth(token_hdr, auth_hdr, request.token)
+
+    await short_term_memory.add_message(session_id, "user", request.message)
+
+    # If already escalated to human agent, bypass the AI graph
+    # Agent replies are delivered by H5 polling — not duplicated here.
+    if handoff_store.is_escalated(session_id):
+        escalated_session = handoff_store.get(session_id)
+        if escalated_session and escalated_session.status == "active":
+            handoff_store.user_message(session_id, request.message)
+
+        response_text = "."
+
+        async def escalated_event_generator() -> AsyncGenerator[str, None]:
+            yield _sse({"type": "status", "text": "人工客服"})
+            yield _sse({"type": "meta", "intent": "human_handoff", "compliance_passed": True, "escalated": True})
+            yield _sse({"type": "content", "text": response_text})
+            yield _sse({"type": "done"})
+
+        return StreamingResponse(
+            escalated_event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    initial_state = _build_initial_state(request.message, request.user_id, session_id, auth_token, auth_type)
+    config = {"configurable": {"thread_id": session_id}}
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        # 后台任务：运行 graph
+        task = asyncio.create_task(_run_graph_with_events(initial_state, config, queue))
+
+        full_text = ""
+        try:
+            while True:
+                event = await queue.get()
+                event_type = event.get("type", "")
+
+                if event_type == "done":
+                    break
+
+                if event_type == "error":
+                    full_text = event.get("text", "")
+                    yield _sse(event)
+                    break
+
+                if event_type == "content":
+                    text = event.get("text", "")
+                    full_text += text
+
+                yield _sse(event)
+        finally:
+            await task
+            # 保存完整回复到短期记忆
+            if full_text:
+                await short_term_memory.add_message(session_id, "assistant", full_text)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲
+        },
     )
 
 
 @app.get("/api/history/{session_id}")
 async def get_history(session_id: str):
-    """获取对话历史"""
+    """获取对话历史——包含当前 escalation 状态"""
     history = await short_term_memory.get_history(session_id)
-    return {"session_id": session_id, "messages": history}
+    escalated = handoff_store.is_escalated(session_id)  # resolved 的会话返回 False
+    return {
+        "session_id": session_id,
+        "messages": history,
+        "escalated": escalated,
+    }
 
 
 @app.get("/api/tools")
@@ -234,6 +396,185 @@ async def get_ticket(ticket_id: str):
     if not ticket:
         raise HTTPException(status_code=404, detail=f"未找到工单号 {ticket_id}")
     return TicketDetailResponse(**ticket)
+
+
+# ── 人工客服队列 API ──────────────────────────────────────
+
+class HandoffSessionItem(BaseModel):
+    session_id: str
+    user_id: str
+    status: str
+    message_count: int
+    agent_id: str
+    agent_name: str
+    created_at: str
+    accepted_at: str
+    resolved_at: str
+
+
+class HandoffMessageItem(BaseModel):
+    role: str
+    content: str
+    timestamp: str
+
+
+class AcceptRequest(BaseModel):
+    agent_id: str = "admin"
+    agent_name: str = "管理员"
+
+
+class ReplyRequest(BaseModel):
+    message: str
+
+
+@app.get("/api/human-queue", response_model=list[HandoffSessionItem])
+async def list_human_queue():
+    """获取所有升级到人工的会话列表"""
+    return handoff_store.list_queued()
+
+
+@app.post("/api/human-queue/{session_id}/accept", response_model=HandoffSessionItem)
+async def accept_human_session(session_id: str, req: AcceptRequest = AcceptRequest()):
+    """管理员接管人工会话"""
+    session = handoff_store.accept(session_id, req.agent_id, req.agent_name)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"未找到会话 {session_id}")
+    return session.to_dict()
+
+
+@app.post("/api/human-queue/{session_id}/reply")
+async def agent_reply(session_id: str, req: ReplyRequest):
+    """管理员发送人工回复"""
+    session = handoff_store.agent_reply(session_id, req.message)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"未找到会话 {session_id}")
+    return {"success": True, "session_id": session_id}
+
+
+@app.get("/api/human-queue/{session_id}/messages", response_model=list[HandoffMessageItem])
+async def get_human_session_messages(session_id: str, since: int = 0):
+    """获取人工会话的消息（管理员端轮询）—— 包含接管前的聊天记录"""
+    session = handoff_store.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"未找到会话 {session_id}")
+
+    # 1. 获取接管前的聊天记录 (short_term_memory 中存储了全部 user + assistant 消息)
+    history = await short_term_memory.get_history(session_id)
+
+    # 2. 与 handoff_store 中的消息合并，按 (role, content) 去重
+    existing = set()
+    all_msgs: list[dict] = []
+
+    for msg in history:
+        key = (msg.get("role", ""), msg.get("content", ""))
+        existing.add(key)
+        all_msgs.append(msg)
+
+    for msg in session.messages:
+        key = (msg.get("role", ""), msg.get("content", ""))
+        if key not in existing:
+            all_msgs.append(msg)
+
+    return all_msgs[since:]
+
+
+@app.post("/api/human-queue/{session_id}/user-message")
+async def user_message_to_agent(session_id: str, req: ReplyRequest):
+    """用户端发消息给人工客服（已升级会话中用户继续发消息）"""
+    session = handoff_store.user_message(session_id, req.message)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"未找到会话 {session_id}")
+    return {"success": True, "session_id": session_id}
+
+
+@app.get("/api/human-queue/{session_id}/user-poll")
+async def user_poll_agent(session_id: str, since: int = 0):
+    """用户端轮询人工回复"""
+    session = handoff_store.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"未找到会话 {session_id}")
+    # Only return agent replies
+    agent_messages = [m for m in session.messages[since:] if m.get("role") == "agent"]
+    return {"status": session.status, "messages": agent_messages}
+
+
+# ── WebSocket 实时消息通道 ────────────────────────────────
+
+@app.websocket("/ws/user/{session_id}")
+async def ws_user(session_id: str, ws: WebSocket):
+    """H5 用户端 WebSocket — 接收人工回复"""
+    await ws_manager.connect_user(session_id, ws)
+    try:
+        while True:
+            text = await ws.receive_text()
+            data = json.loads(text)
+            msg_type = data.get("type", "")
+            if msg_type == "user_message":
+                session = handoff_store.get(session_id)
+                # 会话已解决或不存在 → 通知H5切回AI模式
+                if session is None or session.status == "resolved":
+                    await short_term_memory.add_message(session_id, "user", data.get("content", ""))
+                    await ws_manager._send_to_user(session_id, {
+                        "type": "session_resolved",
+                        "session_id": session_id,
+                    })
+                else:
+                    handoff_store.user_message(session_id, data.get("content", ""))
+                    await short_term_memory.add_message(session_id, "user", data.get("content", ""))
+                    await ws_manager.user_to_admin(session_id, data.get("content", ""))
+            elif msg_type == "pong":
+                pass
+    except (WebSocketDisconnect, Exception):
+        ws_manager.disconnect_user(session_id)
+
+
+@app.websocket("/ws/admin/{session_id}")
+async def ws_admin(session_id: str, ws: WebSocket):
+    """管理后台 WebSocket — 接收用户消息 + 发送人工回复"""
+    if not handoff_store.get(session_id):
+        if handoff_store.is_escalated(session_id):
+            handoff_store.accept(session_id)
+        else:
+            await ws.accept()
+            await ws.send_text(json.dumps({"type": "error", "text": "会话不存在"}))
+            await ws.close()
+            return
+
+    await ws_manager.connect_admin(session_id, ws)
+    try:
+        while True:
+            text = await ws.receive_text()
+            data = json.loads(text)
+            msg_type = data.get("type", "")
+            if msg_type == "agent_message":
+                content = data.get("content", "")
+                agent_name = data.get("agent_name", "")
+                handoff_store.agent_reply(session_id, content)
+                await short_term_memory.add_message(session_id, "assistant", f"[人工客服] {content}")
+                await ws_manager.admin_to_user(session_id, content, agent_name)
+            elif msg_type == "accept":
+                handoff_store.accept(
+                    session_id,
+                    data.get("agent_id", "admin"),
+                    data.get("agent_name", "管理员"),
+                )
+                await ws.send_text(json.dumps({"type": "accepted", "session_id": session_id}))
+            elif msg_type == "resolve":
+                handoff_store.resolve(session_id)
+                await ws_manager.admin_to_user(session_id, "感谢您的咨询，本次服务已结束，如有其他问题欢迎再次联系我们。", "系统")
+                # 通知H5会话已结束，让H5切回AI模式
+                await ws_manager._send_to_user(session_id, {"type": "resolved", "session_id": session_id})
+                await ws_manager._send_to_admin(session_id, {"type": "resolved", "session_id": session_id})
+            elif msg_type == "pong":
+                pass
+    except (WebSocketDisconnect, Exception):
+        ws_manager.disconnect_admin(session_id)
+
+    # Clean up if no one is connected
+    if not ws_manager._sessions.get(session_id):
+        pass
+    elif not ws_manager._sessions[session_id].user_ws and not ws_manager._sessions[session_id].admin_ws:
+        ws_manager._sessions.pop(session_id, None)
 
 
 @app.get("/health")
