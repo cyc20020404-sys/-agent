@@ -32,12 +32,14 @@ class ShortTermMemory:
         redis_url: str = "redis://localhost:6379/0",
         max_turns: int = 20,
         ttl_seconds: int = 1800,
+        mysql_store: Any = None,
     ):
         self.max_turns = max_turns
         self.ttl_seconds = ttl_seconds
         self._redis_url = redis_url
         self._redis: Any = None
         self._fallback_store: dict[str, list] = {}
+        self._mysql_store = mysql_store
 
     async def _get_redis(self):
         """懒加载Redis连接"""
@@ -76,15 +78,42 @@ class ShortTermMemory:
             if len(self._fallback_store[session_id]) > self.max_turns:
                 self._fallback_store[session_id] = self._fallback_store[session_id][-self.max_turns:]
 
+        # 写穿透到 MySQL（静默失败，不影响 Redis 路径）
+        if self._mysql_store is not None:
+            try:
+                await self._mysql_store.add_message(
+                    session_id, role, content, message["timestamp"]
+                )
+            except Exception:
+                pass
+
     async def get_history(self, session_id: str, last_n: int | None = None) -> list[dict]:
-        """获取对话历史"""
+        """获取对话历史，Redis 过期后回退 MySQL"""
         r = await self._get_redis()
+        n = last_n or self.max_turns
 
         if r is not None:
             key = self._session_key(session_id)
-            n = last_n or self.max_turns
             raw = await r.lrange(key, -n, -1)
-            return [json.loads(item) for item in raw]
+            if raw:
+                return [json.loads(item) for item in raw]
+
+            # Redis 为空 → 尝试 MySQL 回退
+            if self._mysql_store is not None:
+                try:
+                    mysql_history = await self._mysql_store.get_messages(session_id, n)
+                    if mysql_history:
+                        # 回填 Redis，后续读取走缓存
+                        for msg in mysql_history:
+                            await r.rpush(
+                                key, json.dumps(msg, ensure_ascii=False)
+                            )
+                        await r.ltrim(key, -self.max_turns, -1)
+                        await r.expire(key, self.ttl_seconds)
+                        return mysql_history
+                except Exception:
+                    pass
+            return []
         else:
             history = self._fallback_store.get(session_id, [])
             if last_n:

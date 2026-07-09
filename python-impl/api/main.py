@@ -24,6 +24,7 @@ from agents.ws_manager import ws_manager
 from memory.working_memory import WorkingMemory
 from memory.short_term import ShortTermMemory
 from memory.long_term import LongTermMemory
+from memory.mysql_store import MysqlStore
 from mcp.mcp_server import MCPToolServer
 from mcp.backend_client import BackendClient
 from mcp.backend_tools import create_backend_tools
@@ -34,7 +35,27 @@ load_dotenv()
 
 
 working_memory = WorkingMemory()
-short_term_memory = ShortTermMemory(redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+
+# 配置 MySQL 持久化存储（可选，未配置则仅用 Redis）
+_mysql_host = os.getenv("MYSQL_HOST")
+_mysql_db = os.getenv("MYSQL_DATABASE")
+_mysql_user = os.getenv("MYSQL_USER")
+if _mysql_host and _mysql_db and _mysql_user:
+    chat_history_store = MysqlStore(
+        host=_mysql_host,
+        port=int(os.getenv("MYSQL_PORT", "3306")),
+        database=_mysql_db,
+        user=_mysql_user,
+        password=os.getenv("MYSQL_PASSWORD", ""),
+        pool_size=int(os.getenv("MYSQL_POOL_SIZE", "5")),
+    )
+else:
+    chat_history_store = None
+
+short_term_memory = ShortTermMemory(
+    redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+    mysql_store=chat_history_store,
+)
 long_term_memory = LongTermMemory(index_path=os.getenv("FAISS_INDEX_PATH", "./vector_store/faiss_index"))
 
 # 注册管理员端工具（token header）和用户端工具（authentication header）
@@ -88,6 +109,10 @@ async def lifespan(app: FastAPI):
     )
 
     yield
+
+    # 关闭 MySQL 连接池
+    if chat_history_store is not None:
+        await chat_history_store.close()
 
 
 app = FastAPI(
