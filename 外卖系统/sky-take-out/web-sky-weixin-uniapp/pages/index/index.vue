@@ -1,9 +1,9 @@
 <template>
-  <view class="page-root">
+  <view class="home-page">
     <!-- 导航 -->
     <navBar></navBar>
     <!-- end -->
-    <view class="home_content" @touchmove.stop.prevent="disabledScroll">
+    <view class="home_content" :style="{ paddingTop: ht + 'px' }">
       <!-- 店铺基本信息 -->
       <view class="restaurant_info_box">
         <view class="restaurant_info">
@@ -30,10 +30,10 @@
           <!-- 下部---信息简介 -->
           <view class="info_bottom">
             <view>
-              <view class="word">{{ shopInfo().description || "商家简介获取中.." }} </view>
+              <view class="word">{{ shopInfo().description || "欢迎光临，现点现做" }} </view>
               <view class="address">
                 <icon></icon>
-                {{ shopInfo().shopAddress || "商家店铺获取中.." }}
+                {{ shopInfo().shopAddress || "店铺地址暂未设置" }}
               </view>
             </view>
             <view>
@@ -62,7 +62,7 @@
           <view class="type_item" v-for="(item, index) in dishListItems" :key="index">
             <!-- 点击查看详情 -->
             <view class="dish_img" @click="openDetailHandle(item)">
-              <image mode="aspectFill" :src="item.image" class="dish_img_url"></image>
+              <image mode="aspectFill" :src="item.image || '/static/imgDefault.png'" class="dish_img_url" @error="handleDishImageError(item)"></image>
             </view>
             <view class="dish_info">
               <view class="dish_name" @click="openDetailHandle(item)">{{
@@ -97,7 +97,7 @@
           <view v-if="typeListData.length > 0">该分类下暂无菜品</view>
         </view>
       </view>
-      <view class="restaurant_close" v-else>店铺已打烊</view>
+      <view class="restaurant_close" v-else-if="shopStatus === 0">店铺已打烊</view>
       <!-- end -->
       <view class="mask-box"></view>
       <!-- 底部去结算 -->
@@ -110,7 +110,7 @@
           <text class="ico">￥</text>
           0
         </view>
-        <view class="ord<strong></strong>er_but">去结算</view>
+        <view class="order_but disabled">去结算</view>
       </view>
       <!-- end -->
       <!-- 购物车里有订单结算 -->

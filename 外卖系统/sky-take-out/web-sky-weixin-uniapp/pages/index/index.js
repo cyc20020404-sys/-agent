@@ -43,8 +43,8 @@ export default {
 			openMoreNormPop: false,
 			moreNormDataes: null,
 			tableInfo: null,
-			moreNormDishdata: null,
-			moreNormdata: null,
+			moreNormDishdata: {},
+			moreNormdata: [],
 			// 套餐中查询到的菜品名称
 			dishMealData: null,
 			openTablePeoPleNumber: 1,
@@ -114,15 +114,11 @@ export default {
 			return orderData
 		},
 		ht: function () {
-			try {
-				return (
-					uni.getMenuButtonBoundingClientRect().top +
-					uni.getMenuButtonBoundingClientRect().height +
-					7
-				)
-			} catch (e) {
-				return 44 // H5 fallback navbar height
-			}
+			const menuButton = process.env.UNI_PLATFORM === 'h5'
+				? null
+				: uni.getMenuButtonBoundingClientRect()
+			return (menuButton && menuButton.top || 0) +
+				(menuButton && menuButton.height || 44) + 7
 		},
 	},
 
@@ -144,11 +140,88 @@ export default {
 		}
 	},
 	onShow() {
-		if (this.token()) {
+		if (this.token() || process.env.UNI_PLATFORM === 'h5') {
 			this.init()
 		}
 	},
 	methods: {
+		handleDishImageError(item) {
+			if (item && item.image !== '/static/imgDefault.png') {
+				item.image = '/static/imgDefault.png'
+			}
+		},
+		guestCartStorageKey() {
+			return 'sky-h5-guest-cart'
+		},
+		isH5Guest() {
+			return process.env.UNI_PLATFORM === 'h5' && !this.token()
+		},
+		loadGuestCart() {
+			let cart = []
+			try {
+				const saved = uni.getStorageSync(this.guestCartStorageKey())
+				cart = Array.isArray(saved) ? saved : []
+			} catch (err) {
+				cart = []
+			}
+			this.initdishListMut(cart)
+			this.computOrderInfo()
+		},
+		saveGuestCart(cart) {
+			const normalized = Array.isArray(cart) ? cart.map(item => ({ ...item })) : []
+			this.initdishListMut(normalized)
+			try {
+				uni.setStorageSync(this.guestCartStorageKey(), normalized)
+			} catch (err) { }
+			this.computOrderInfo()
+			this.setOrderNum()
+		},
+		guestCartIdentity(item) {
+			const dishId = item.dishId || (item.type === 1 ? item.id : null)
+			const setmealId = item.setmealId || (item.type === 2 ? item.id : null)
+			const dishFlavor = item.dishFlavor || (this.flavorDataes || []).join(',')
+			return { dishId, setmealId, dishFlavor }
+		},
+		addGuestCart(item) {
+			const identity = this.guestCartIdentity(item)
+			const cart = (this.orderListDataes || []).map(row => ({ ...row }))
+			const index = cart.findIndex(row =>
+				((identity.dishId && row.dishId === identity.dishId) ||
+				 (identity.setmealId && row.setmealId === identity.setmealId)) &&
+				(row.dishFlavor || '') === (identity.dishFlavor || '')
+			)
+			if (index >= 0) {
+				cart[index].number += 1
+			} else {
+				cart.push({
+					id: `guest-${Date.now()}-${cart.length}`,
+					dishId: identity.dishId,
+					setmealId: identity.setmealId,
+					dishFlavor: identity.dishFlavor || null,
+					name: item.name,
+					image: item.image || '/static/imgDefault.png',
+					amount: Number(item.amount != null ? item.amount : item.price),
+					number: 1
+				})
+			}
+			this.saveGuestCart(cart)
+			this.openMoreNormPop = false
+			this.flavorDataes = []
+			uni.showToast({ title: '已加入购物车', icon: 'success' })
+		},
+		redGuestCart(item) {
+			const identity = this.guestCartIdentity(item)
+			const cart = (this.orderListDataes || []).map(row => ({ ...row }))
+			const index = cart.findIndex(row =>
+				((identity.dishId && row.dishId === identity.dishId) ||
+				 (identity.setmealId && row.setmealId === identity.setmealId)) &&
+				(row.dishFlavor || '') === (identity.dishFlavor || '')
+			)
+			if (index < 0) return
+			cart[index].number -= 1
+			if (cart[index].number <= 0) cart.splice(index, 1)
+			this.saveGuestCart(cart)
+		},
 		//   vuex储存信息
 		...mapMutations([
 			"setShopInfo", //设置店铺信息
@@ -182,101 +255,90 @@ export default {
 				})
 			})
 		},
-		// 运行时判断是否H5环境（uni-app条件编译不处理外部js文件）
-		isH5Env() {
-			try {
-				if (typeof wx !== 'undefined' && wx.getMenuButtonBoundingClientRect) return false
-			} catch (e) {}
-			return true
-		},
 		// 获取用户信息
 		getData() {
-			let res = { height: 0 }
-			try { res = wx.getMenuButtonBoundingClientRect() } catch (e) {}
+			let res = process.env.UNI_PLATFORM === 'h5'
+				? null
+				: wx.getMenuButtonBoundingClientRect()
+			res = res || { top: 0, height: 44 }
 			let _this = this
 			// 获取店铺状态
 			this.getShopInfo()
-			this.selectHeight = res.height || 44
+			this.selectHeight = res.height
+		if (process.env.UNI_PLATFORM === 'h5' && this.token() === '') {
+			return
+		}
 			if (this.token() === "") {
-				if (this.isH5Env()) {
-					// H5 浏览器环境：直接调用后端登录获取token
-					let h5Code = "h5-dev-code-" + Date.now()
-					uni.showModal({
-						title: "H5开发模式",
-						content: "此环境仅用于开发调试，确认继续？",
-						showCancel: false,
-						success: function () {
-							userLogin({ code: h5Code, location: "116.481488,39.990464" })
-								.then((success) => {
-									if (success.code === 1) {
-										_this.setToken(success.data.token)
-										_this.setDeliveryFee(success.data.deliveryFee)
-										_this.setShopInfo({
-											shopName: success.data.shopName,
-											shopAddress: success.data.shopAddress,
-											description: success.data.description,
-											shopId: success.data.shopId,
-										})
-										_this.setBaseUserInfo({ nickName: "H5用户", avatarUrl: "", gender: 0 })
-										_this.init()
+				uni.showModal({
+					title: "温馨提示",
+					content: "亲，授权微信登录后才能点餐！",
+					showCancel: false,
+					success(res) {
+						if (res.confirm) {
+							let jsCode = ""
+							uni.login({
+								provider: "weixin",
+								success: (loginRes) => {
+									if (loginRes.errMsg === "login:ok") {
+										jsCode = loginRes.code
 									}
-								})
-								.catch(() => {
-									uni.showToast({ title: "登录失败，请确认后端服务已启动", icon: "none" })
-								})
-						}
-					})
-				} else {
-					// 微信小程序
-					uni.showModal({
-						title: "温馨提示",
-						content: "亲，授权微信登录后才能点餐！",
-						showCancel: false,
-						success(res) {
-							if (res.confirm) {
-								let jsCode = ""
-								uni.login({
-									provider: "weixin",
-									success: (loginRes) => {
-										if (loginRes.errMsg === "login:ok") jsCode = loginRes.code
-									},
-								})
-								uni.getUserProfile({
-									desc: "登录",
-									success: function (userInfo) {
-										_this.setBaseUserInfo(userInfo.userInfo)
-										var params = { code: jsCode, location: "116.481488,39.990464" }
-										try {
-											uni.getLocation({ type: 'gcj02', isHighAccuracy: true }).then(function (resArr) {
-												var result = resArr[1] || resArr
-												if (result && result.longitude) {
-													params.location = result.longitude + "," + result.latitude
-												}
-												doUserLogin(params)
-											}).catch(function () { doUserLogin(params) })
-										} catch (e) { doUserLogin(params) }
-										function doUserLogin(p) {
-											userLogin(p).then(function (success) {
-												if (success.code === 1) {
-													_this.setToken(success.data.token)
-													_this.setDeliveryFee(success.data.deliveryFee)
-													_this.setShopInfo({
-														shopName: success.data.shopName,
-														shopAddress: success.data.shopAddress,
-														description: success.data.description,
-														shopId: success.data.shopId,
-													})
-													_this.init()
-												}
-											}).catch(function () {})
+								},
+							})
+							// 授权
+							uni.getUserProfile({
+								desc: "登录",
+								success: function (userInfo) {
+									_this.setBaseUserInfo(userInfo.userInfo)
+									const params = {
+										code: jsCode,
+										// 传递地理位置信息
+									}
+									// 获取定位信息
+									uni.getLocation({
+										type: 'gcj02', isHighAccuracy: true
+									}).then(([err, result]) => {
+										if (err) {
+											uni.showToast({
+												title: "获取地理位置失败",
+												icon: "none"
+											})
+										} else {
+											if (process.env.NODE_ENV === '"development"') {
+												params.location = `116.481488,39.990464`//	先写死在北京
+											} else {
+												params.location = `${result.longitude},${result.latitude}`
+											}
+
+											userLogin(params)
+												.then((success) => {
+													if (success.code === 1) {
+														_this.setToken(success.data.token)
+														// 保存配送费
+														_this.setDeliveryFee(success.data.deliveryFee)
+														// 保存商铺信息
+														_this.setShopInfo({
+															shopName: success.data.shopName,
+															shopAddress: success.data.shopAddress,
+															description: success.data.description,
+															shopId: success.data.shopId,
+														})
+														_this.init()
+													}
+												})
+												.catch((err) => { })
+
+
+
 										}
-									},
-									fail: function () {},
-								})
-							}
-						},
-					})
-				}
+
+									})
+
+								},
+								fail: function (err) { },
+							})
+						}
+					},
+				})
 			}
 		},
 
@@ -297,7 +359,11 @@ export default {
 				}
 			})
 			// 调用一次购物车集合---初始化
+			if (this.token()) {
 			this.getTableOrderDishListes()
+		} else if (process.env.UNI_PLATFORM === 'h5') {
+			this.loadGuestCart()
+		}
 		},
 		// 点击左边的栏目切换
 		async swichMenu(params, index) {
@@ -430,6 +496,7 @@ export default {
 				.then((res) => {
 					this.phoneData = res.data.phone
 					console.log(res);
+					this.setShopInfo(res.data)
 					this.setShopPhone(res.data)
 				})
 				.catch((err) => { })
@@ -452,6 +519,12 @@ export default {
 		},
 		// 去订单页面
 		goOrder() {
+			if (this.isH5Guest()) {
+				uni.navigateTo({
+					url: '/pages/login/index?redirect=' + encodeURIComponent('/pages/order/index')
+				})
+				return
+			}
 			uni.navigateTo({
 				url: "/pages/order/index",
 			})
@@ -461,13 +534,17 @@ export default {
 			// 规格
 			if (
 				this.openMoreNormPop &&
-				(!this.flavorDataes || this.flavorDataes.length <= 0)
+				(!this.flavorDataes || this.flavorDataes.length < this.moreNormdata.length)
 			) {
 				uni.showToast({
 					title: "请选择规格",
 					icon: "none",
 				})
 				return false
+			}
+			if (this.isH5Guest()) {
+				this.addGuestCart(item)
+				return
 			}
 			this.openMoreNormPop = false
 			// 实时更新obj.newCardNumber新添加的字段----加入购物车数量number
@@ -521,7 +598,9 @@ export default {
 				.then((res) => {
 					if (res.code === 1) {
 						// 调用一次购物车集合---初始化
-						this.getTableOrderDishListes()
+						if (this.token()) {
+			this.getTableOrderDishListes()
+		}
 						// 重新调取刷新右侧具体菜品列表
 						this.getDishListDataes(this.rightIdAndType)
 						this.flavorDataes = []
@@ -537,6 +616,10 @@ export default {
 		},
 		// 减菜 - 添加菜品
 		async redDishAction(item, form) {
+			if (this.isH5Guest()) {
+				this.redGuestCart(item)
+				return
+			}
 			// 实时更新obj.newCardNumber新添加的字段----加入购物车数量number
 			this.tablewareNumber--
 			this.dishDetailes.dishNumber--
@@ -581,7 +664,9 @@ export default {
 				.then((res) => {
 					if (res.code === 1) {
 						// 调用一次购物车集合---初始化
-						this.getTableOrderDishListes()
+						if (this.token()) {
+			this.getTableOrderDishListes()
+		}
 						// 重新调取刷新右侧具体菜品列表
 						this.getDishListDataes(this.rightIdAndType)
 					}
@@ -590,11 +675,18 @@ export default {
 		},
 		// 清空购物车
 		clearCardOrder() {
+			if (this.isH5Guest()) {
+				this.saveGuestCart([])
+				this.openOrderCartList = false
+				return
+			}
 			delShoppingCart()
 				.then((res) => {
 					this.openOrderCartList = false
 					// 调用一次购物车集合---初始化
-					this.getTableOrderDishListes()
+					if (this.token()) {
+			this.getTableOrderDishListes()
+		}
 					// 重新调取刷新右侧具体菜品列表
 					this.getDishListDataes(this.rightIdAndType)
 				})
@@ -640,22 +732,12 @@ export default {
 		},
 		// 选规格 处理一行只能选择一种
 		checkMoreNormPop(val) {
-			let obj = val.obj
-			let item = val.item
-			let ind
-			let findst = obj.some((n) => {
-				ind = this.flavorDataes.findIndex((o) => o == n)
-				return ind != -1
-			})
-			const num = this.flavorDataes.findIndex((it) => it == item)
-			if (num == -1 && !findst) {
-				this.flavorDataes.push(item)
-			} else if (findst) {
-				this.flavorDataes.splice(ind, 1)
-				this.flavorDataes.push(item)
-			} else {
-				this.flavorDataes.splice(num, 1)
-			}
+			const options = val.obj || []
+			const item = val.item
+			const selectedIndex = this.flavorDataes.findIndex(value => options.includes(value))
+			if (selectedIndex >= 0 && this.flavorDataes[selectedIndex] === item) return
+			if (selectedIndex >= 0) this.flavorDataes.splice(selectedIndex, 1, item)
+			else this.flavorDataes.push(item)
 		},
 		// 关闭选规格弹窗
 		closeMoreNorm(moreNormDishdata) {

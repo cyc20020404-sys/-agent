@@ -27,6 +27,9 @@ public class User implements Serializable {
     //手机号
     private String phone;
 
+    //PBKDF2 password hash for H5 account login
+    private String password;
+
     //性别 0 女 1 男
     private String sex;
 

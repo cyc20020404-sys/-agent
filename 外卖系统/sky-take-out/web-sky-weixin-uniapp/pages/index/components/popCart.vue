@@ -26,7 +26,7 @@
           <view class="dish_img"
             ><image
               mode="aspectFill"
-              :src="obj.image"
+              :src="obj.image || '/static/imgDefault.png'"
               class="dish_img_url"
             ></image
           ></view>
@@ -83,10 +83,10 @@ export default {
     },
     // 加入购物车
     addDishAction(obj, item) {
-      this.$emit("addDishAction", { obj: obj, item: item });
+      this.$emit("addDishAction", obj, item);
     },
     redDishAction(obj, item) {
-      this.$emit("redDishAction", { obj: obj, item: item });
+      this.$emit("redDishAction", obj, item);
     },
   },
 };
@@ -242,4 +242,163 @@ export default {
     top: 40rpx;
   }
 }
+
+/* #ifdef H5 */
+/* H5 shopping cart dialog fixes */
+.cart_pop {
+  position: absolute !important;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  height: min(62vh, 560px) !important;
+  padding: 20px 18px 78px !important;
+  overflow: hidden;
+  border-radius: 20px 20px 0 0 !important;
+  background: #fff;
+  box-shadow: 0 -12px 34px rgba(0, 0, 0, 0.14);
+}
+
+.cart_pop .top_title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  padding: 0 0 14px !important;
+  border-bottom: 1px solid #ebeef5;
+}
+
+.cart_pop .top_title .tit {
+  color: #20232a;
+  font-size: 20px !important;
+  font-weight: 600;
+  line-height: 28px;
+}
+
+.cart_pop .top_title .clear {
+  display: flex;
+  align-items: center;
+  color: #8c9098;
+  font-size: 14px !important;
+}
+
+.cart_pop .top_title .clear_icon {
+  width: 16px !important;
+  height: 16px !important;
+  margin-right: 5px !important;
+}
+
+.cart_pop .top_title .clear-des {
+  height: auto !important;
+  line-height: 24px !important;
+}
+
+.cart_pop .card_order_list {
+  min-height: 0;
+  flex: 1;
+  width: 100%;
+  height: auto !important;
+  padding: 8px 8px 72px 0 !important;
+}
+
+.cart_pop .type_item {
+  display: flex !important;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 108px;
+  margin: 0 !important;
+  padding: 14px 0 !important;
+}
+
+.cart_pop .dish_img {
+  flex: 0 0 78px;
+  width: 78px !important;
+  margin-right: 12px !important;
+}
+
+.cart_pop .dish_img_url {
+  display: block;
+  width: 78px !important;
+  height: 78px !important;
+  border-radius: 10px !important;
+  background: #f2f3f5;
+}
+
+.cart_pop .dish_info {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+  padding: 0 0 36px !important;
+  border-bottom: 1px solid #ebeef5;
+}
+
+.cart_pop .dish_name {
+  overflow: hidden;
+  color: #333;
+  font-size: 16px !important;
+  font-weight: 600;
+  line-height: 22px !important;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cart_pop .dish_dishFlavor {
+  position: static !important;
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #8c9098;
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cart_pop .dish_price {
+  position: absolute !important;
+  bottom: 8px !important;
+  left: 0;
+  color: #e94e3c;
+  font-size: 17px !important;
+  line-height: 28px;
+}
+
+.cart_pop .dish_price .ico {
+  font-size: 13px !important;
+}
+
+.cart_pop .dish_active {
+  position: absolute !important;
+  right: 32px !important;
+  bottom: 9px !important;
+  display: flex;
+  align-items: center;
+}
+
+.cart_pop .dish_add,
+.cart_pop .dish_red {
+  display: block;
+  width: 30px !important;
+  height: 30px !important;
+}
+
+.cart_pop .dish_number {
+  min-width: 30px;
+  padding: 0 4px !important;
+  font-size: 15px !important;
+  line-height: 30px !important;
+  text-align: center;
+}
+
+.cart_pop .card_order_list::before {
+  display: none;
+}
+
+.cart_pop .seize_seat {
+  width: 100%;
+  height: 72px !important;
+}
+/* #endif */
 </style>

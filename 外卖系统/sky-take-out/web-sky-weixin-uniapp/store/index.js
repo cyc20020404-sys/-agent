@@ -3,12 +3,17 @@ import Vuex from 'vuex'
 
 Vue.use(Vuex)
 
+const persistedToken = uni.getStorageSync('token') || ''
+const persistedUser = uni.getStorageSync('baseUserInfo') || ''
+const persistedShopInfo = uni.getStorageSync('shopInfo') || ''
+const persistedDeliveryFee = Number(uni.getStorageSync('deliveryFee') || 0)
+
 const store = new Vuex.Store({
 	state: {
 		storeInfo: {}, // 店铺请求的id信息
-		shopInfo: '',  // 店铺详细信息
+		shopInfo: persistedShopInfo,  // 店铺详细信息
 		orderListData: [],// 购物车列表信息
-		baseUserInfo: '', // 存储获取的用户微信的信息（用户名、头像）
+		baseUserInfo: persistedUser, // 存储获取的用户微信的信息（用户名、头像）
 		lodding: false,
 		sessionId: '',
 		addressBackUrl: '',
@@ -16,11 +21,11 @@ const store = new Vuex.Store({
 		shopPhone: '', //店铺电话
 		shopStatus: {}, //店铺状态
 		orderData: {},
-		token: '',
+		token: persistedToken,
 		arrivals: '',
 		remarkData: '',//备注
 		addressData: {}, //地址选择
-		deliveryFee: 0,// 配送费
+		deliveryFee: persistedDeliveryFee,// 配送费
 		gender: 0 // 收货地址对应的 性别  0 先生  1 女士
 	},
 	mutations: {

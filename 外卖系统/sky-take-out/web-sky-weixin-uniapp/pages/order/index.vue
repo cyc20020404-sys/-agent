@@ -1,6 +1,6 @@
 <!--提交订单-->
 <template>
-  <view>
+  <view class="order-page">
     <!-- 导航 -->
     <uni-nav-bar
       @clickLeft="goBack"
@@ -13,6 +13,12 @@
       backgroundColor="#333333"
     ></uni-nav-bar>
     <!-- end -->
+    <!-- #ifdef H5 -->
+    <view class="h5-order-header">
+      <view class="h5-order-back" @click="goBack">‹</view>
+      <text>确认订单</text>
+    </view>
+    <!-- #endif -->
     <view class="order_content" @touchstart="touchstart">
       <view class="order_content_box">
         <!-- 地址 -->
@@ -46,6 +52,22 @@
           ></dish-detail>
           <!-- end -->
           <view class="boxPad">
+            <!-- #ifdef H5 -->
+            <view class="h5-order-options">
+              <view class="h5-option-row" @click="goRemark">
+                <text>备注</text>
+                <text class="h5-option-value">{{ remark || '无' }} ›</text>
+              </view>
+              <view class="h5-option-row">
+                <text>餐具数量</text>
+                <text class="h5-option-value">{{ tablewareData || '无需餐具' }}</text>
+              </view>
+              <view class="h5-option-row">
+                <text>发票</text>
+                <text class="h5-option-value">暂不支持</text>
+              </view>
+            </view>
+            <!-- #endif -->
             <!-- 备注、餐数数量、发票 -->
             <dish-info
               ref="dishinfo"
