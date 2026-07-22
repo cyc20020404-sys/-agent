@@ -1,3 +1,11 @@
+
+// H5 手机号密码登录
+export const h5Login = (params) =>
+	request({
+		url: '/user/user/h5Login',
+		method: 'POST',
+		params,
+	})
 import { request } from "../../utils/request.js"
 
 // 开桌

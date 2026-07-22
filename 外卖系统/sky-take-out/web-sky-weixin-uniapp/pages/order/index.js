@@ -3,7 +3,7 @@ import {
 	submitOrderSubmit,
 	// 查询默认地址
 	getAddressBookDefault,
-	queryAddressBookList, getEstimatedDeliveryTime
+	queryAddressBookList, getEstimatedDeliveryTime, getShoppingCartList
 } from '../api/api.js'
 import {
 	mapState,
@@ -171,10 +171,15 @@ export default {
 	},
 	methods: {
 		...mapState(['orderListData', 'remarkData', 'addressData', 'storeInfo', 'shopInfo', 'deliveryFee']),
-		...mapMutations(['setAddressBackUrl', 'setOrderData', 'setArrivalTime', 'setRemark', 'setGender']),
-		init() {
+		...mapMutations(['setAddressBackUrl', 'setOrderData', 'setArrivalTime', 'setRemark', 'setGender', 'initdishListMut']),
+		async init() {
+			if (this.orderListDataes.length === 0 && this.$store.state.token) {
+				const result = await getShoppingCartList({})
+				if (result && result.code === 1) {
+					this.initdishListMut(Array.isArray(result.data) ? result.data : [])
+				}
+			}
 			this.computOrderInfo()
-
 		},
 		initPlatform() {
 			const res = uni.getSystemInfoSync()

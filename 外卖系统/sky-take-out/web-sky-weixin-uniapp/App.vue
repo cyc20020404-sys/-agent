@@ -39,6 +39,31 @@ uni-page-body {
   background-color: #fff !important;
 }
 
+/* H5 document reset */
+html,
+body,
+#app,
+uni-app,
+uni-page,
+uni-page-wrapper,
+uni-page-body {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  overflow: hidden;
+  background: #edf0f4;
+  color: #24262b;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+uni-page-body {
+  overflow: hidden;
+}
 .uni-app--showleftwindow .hideOnPc {
   display: none !important;
 }

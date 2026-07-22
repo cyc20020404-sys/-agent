@@ -66,3 +66,35 @@
     margin-left: 14rpx;
   }
 }
+
+/* #ifdef H5 */
+/* H5 navbar layout fixes */
+.navBar {
+  position: fixed;
+  z-index: 1;
+  top: 0;
+  left: 50%;
+  width: 100%;
+  max-width: 720px;
+  height: 170px;
+  overflow: hidden;
+  transform: translateX(-50%);
+}
+
+.index_bg {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+}
+
+.person-box {
+  position: absolute !important;
+  z-index: 2;
+  top: 18px !important;
+  left: 24px !important;
+  color: #fff;
+  font-size: 15px !important;
+  line-height: 32px;
+}
+/* #endif */

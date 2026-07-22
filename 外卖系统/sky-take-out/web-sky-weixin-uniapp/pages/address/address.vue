@@ -1,380 +1,169 @@
+<!-- 收货地址管理 -->
 <template>
-  <view class="customer-box">
-    <uni-nav-bar
-      @clickLeft="goBack"
-      left-icon="back"
-      leftIcon="arrowleft"
-      title="地址管理"
-      statusBar="true"
-      fixed="true"
-      color="#ffffff"
-      backgroundColor="#333333"
-    ></uni-nav-bar>
-    <view
-      class="address"
-      :style="{
-        height: `calc(100% - 136rpx - ${statusBarHeight} - 44px - 20rpx)`,
-      }"
-    >
-      <view
-        v-if="addressList && addressList.length > 0"
-        class="address_content"
-      >
-        <!-- address列表 -->
-        <view
-          class="address_liests"
-          v-for="(item, index) in addressList"
-          :key="index"
-        >
-          <!-- 上部 -->
-          <view class="list_item_top" @click.stop="choseAddress(index, item)">
-            <!-- 左边 -->
-            <view class="item_left">
-              <!-- 地址 -->
-              <view class="details">
-                <text class="tag" :class="'tag' + item.label">{{
-                  getLableVal(item.label)
-                }}</text>
-                <text class="address_word"
-                  >{{ item.provinceName }}{{ item.cityName
-                  }}{{ item.districtName }}{{ item.detail }}</text
-                >
-              </view>
-              <!-- 性别及手机号 -->
-              <view class="sale">
-                <text class="name">{{
-                  item.sex === "0"
-                    ? item.consignee + " 先生"
-                    : item.consignee + " 女士"
-                }}</text>
-                <text class="num">{{ item.phone }}</text>
-              </view>
+  <view class="address-page">
+    <view class="page-nav">
+      <view class="nav-back" @click="goBack">‹</view>
+      <text class="nav-title">地址管理</text>
+      <view class="nav-space"></view>
+    </view>
+
+    <scroll-view class="address-content" scroll-y>
+      <view v-if="loading" class="state-box">
+        <view class="loading-dot"></view>
+        <text>正在加载地址…</text>
+      </view>
+
+      <view v-else-if="addressList.length === 0" class="state-box empty-box">
+        <view class="empty-pin">⌖</view>
+        <text class="empty-title">还没有收货地址</text>
+        <text class="empty-desc">新增地址后，下单时可以直接选择</text>
+      </view>
+
+      <view v-else class="address-list">
+        <view v-if="canChoose" class="choose-tip">请选择本次订单的收货地址</view>
+        <view v-for="item in addressList" :key="item.id" class="address-card"
+          :class="{ default: item.isDefault === 1 }" @click="chooseAddress(item)">
+          <view class="card-main">
+            <view class="address-line">
+              <text class="tag" :class="'tag-' + item.label">{{ getLabel(item.label) }}</text>
+              <text class="address-text">{{ fullAddress(item) }}</text>
             </view>
-            <!-- 右边 -->
-            <view class="item_right">
-              <image
-                @click.stop="addOrEdit('编辑', item)"
-                class="edit"
-                src="../../static/edit.png"
-              ></image>
+            <view class="contact-line">
+              <text class="contact-name">{{ item.consignee }} {{ sexText(item.sex) }}</text>
+              <text class="contact-phone">{{ item.phone }}</text>
             </view>
           </view>
-          <!-- 下部 -->
-          <view class="list_item_bottom">
-            <label class="radio" @click.stop="getRadio(index, item)">
-              <radio
-                class="item_radio"
-                v-if="testValue"
-                color="#FFC200"
-                :value="item.id"
-                :checked="item.isDefault === 1 && isActive === index"
-                @click.stop="getRadio(index, item)"
-              />设为默认地址</label
-            >
+          <view class="edit-button" @click.stop="editAddress(item)">✎</view>
+          <view v-if="canChoose" class="select-arrow">›</view>
+          <view class="card-footer" @click.stop>
+            <view class="default-button" :class="{ checked: item.isDefault === 1 }"
+              @click="setDefault(item)">
+              <view class="check-dot">✓</view>
+              <text>{{ item.isDefault === 1 ? "默认地址" : "设为默认" }}</text>
+            </view>
+            <text v-if="item.isDefault === 1" class="default-hint">下单时优先使用</text>
           </view>
         </view>
       </view>
-      <!-- 无地址展示 -->
-      <empty
-        v-if="isEmpty"
-        boxHeight="100%"
-        textLabel="一个地址都没有哦"
-      ></empty>
-      <view class="add_address">
-        <button
-          class="add_btn"
-          type="primary"
-          plain="true"
-          @click="addOrEdit('新增')"
-        >
-          <text class="add-icon">+</text>
-          新增收货地址
-        </button>
-      </view>
+    </scroll-view>
+
+    <view class="bottom-action">
+      <view class="add-button" @click="addAddress"><text class="plus">＋</text>新增收货地址</view>
     </view>
   </view>
 </template>
 
 <script>
-import { queryAddressBookList, putAddressBookDefault } from "../api/api.js";
-import { mapState, mapMutations } from "vuex";
-import uniNavBar from "@/components/uni-nav-bar/uni-nav-bar.vue";
-import Empty from "@/components/empty/empty";
+import { queryAddressBookList, putAddressBookDefault } from "../api/api.js"
+import { mapState, mapMutations } from "vuex"
+
 export default {
-  components: {
-    uniNavBar,
-    Empty,
-  },
-  data() {
-    return {
-      testValue: true,
-      addressList: [],
-      formRouter: "",
-      isActive: null,
-      isEmpty: false,
-    };
-  },
-  onShow(options) {
-    this.getAddressList();
-    if (options && options.form) {
-      this.formRouter = "";
-      this.formRouter = options.form;
-    }
+  data () {
+    return { loading: true, settingDefaultId: null, addressList: [] }
   },
   computed: {
     ...mapState(["addressBackUrl"]),
-    statusBarHeight() {
-      return uni.getSystemInfoSync().statusBarHeight + "px";
-    },
+    canChoose () { return this.addressBackUrl === "/pages/order/index" },
   },
+  onShow () { this.getAddressList() },
   methods: {
     ...mapMutations(["setAddress"]),
-    goBack() {
-      uni.redirectTo({
-        url: this.addressBackUrl,
-      });
-    },
-    getLableVal(item) {
-      switch (item) {
-        case "1":
-          return "公司";
-        case "2":
-          return "家";
-        case "3":
-          return "学校";
-        default:
-          return "其他";
+    goBack () {
+      if (this.addressBackUrl) {
+        uni.redirectTo({ url: this.addressBackUrl })
+        return
       }
+      uni.navigateBack({ delta: 1, fail: () => uni.switchTab({ url: "/pages/index/index" }) })
     },
-    getAddressList() {
-      this.testValue = false;
-      uni.showLoading({ title: "加载中", mask: true });
+    getAddressList () {
+      this.loading = true
       queryAddressBookList().then((res) => {
-        if (res.code === 1) {
-          setTimeout(function () {
-            uni.hideLoading();
-          }, 100);
-          this.testValue = true;
-          this.addressList = res.data;
-          this.isEmpty = true;
-          this.addressList.map((val, index) => {
-            if (val.isDefault === 1) {
-              this.isActive = index;
-            }
-          });
+        if (res.code !== 1) {
+          uni.showToast({ title: res.msg || "地址加载失败", icon: "none" })
+          return
         }
-      });
+        this.addressList = Array.isArray(res.data) ? res.data : []
+      }).catch(() => uni.showToast({ title: "地址加载失败，请稍后重试", icon: "none" }))
+        .finally(() => { this.loading = false })
     },
-
-    addOrEdit(type, item) {
-      // 编辑与新增
-      if (type === "新增") {
-        // TODO
-        uni.redirectTo({
-          url: "/pages/addOrEditAddress/addOrEditAddress",
-        });
-      } else {
-        // TODO
-        uni.redirectTo({
-          url:
-            "/pages/addOrEditAddress/addOrEditAddress?type=" +
-            "编辑" +
-            "&" +
-            "id=" +
-            item.id,
-        });
+    getLabel (label) {
+      const labels = { "1": "公司", "2": "家", "3": "学校" }
+      return labels[String(label)] || "其他"
+    },
+    sexText (sex) { return String(sex) === "0" ? "先生" : "女士" },
+    fullAddress (item) {
+      return [item.provinceName, item.cityName, item.districtName, item.detail].filter(Boolean).join("")
+    },
+    addAddress () { uni.navigateTo({ url: "/pages/addOrEditAddress/addOrEditAddress" }) },
+    editAddress (item) {
+      uni.navigateTo({ url: "/pages/addOrEditAddress/addOrEditAddress?type=编辑&id=" + item.id })
+    },
+    chooseAddress (item) {
+      if (!this.canChoose) {
+        this.editAddress(item)
+        return
       }
+      this.setAddress(item)
+      uni.redirectTo({ url: "/pages/order/index?address=" + encodeURIComponent(JSON.stringify(item)) })
     },
-    // 点击整体设置为默认地址并返填订单页面
-    choseAddress(e, item) {
-      if (this.addressBackUrl !== "/pages/order/index") {
-        return false;
-      }
-      uni.redirectTo({
-        url: "/pages/order/index?address=" + JSON.stringify(item),
-      });
-      this.setAddress(item);
-    },
-    getRadio(index, item) {
-      // // 提供默认接口
-      item.isDefault = 1;
-      this.isActive = index;
+    setDefault (item) {
+      if (item.isDefault === 1 || this.settingDefaultId) return
+      this.settingDefaultId = item.id
       putAddressBookDefault({ id: item.id }).then((res) => {
-        if (res.code === 1) {
-          uni.showToast({
-            title: "默认地址设置成功",
-            duration: 2000,
-            icon: "none",
-          });
+        if (res.code !== 1) {
+          uni.showToast({ title: res.msg || "设置失败", icon: "none" })
+          return
         }
-      });
+        this.addressList = this.addressList.map((address) => ({
+          ...address,
+          isDefault: address.id === item.id ? 1 : 0,
+        }))
+        uni.showToast({ title: "已设为默认地址", icon: "success" })
+      }).catch(() => uni.showToast({ title: "设置失败，请稍后重试", icon: "none" }))
+        .finally(() => { this.settingDefaultId = null })
     },
   },
-};
+}
 </script>
 
 <style lang="scss" scoped>
-.address {
-  width: 750rpx;
-  .address_content {
-    margin: 0 20rpx;
-    padding-bottom: 20rpx;
-    height: 100%;
-    overflow-y: auto;
-    .address_liests {
-      width: 100%;
-      height: 256rpx;
-      opacity: 1;
-      background: #ffffff;
-      border-radius: 12rpx;
-      display: flex;
-      display: flex;
-      flex-direction: column;
-      margin-top: 20rpx;
-      padding: 0 28rpx 0 12rpx;
-      box-sizing: border-box;
-      // 上部
-      .list_item_top {
-        flex: 1;
-        width: 100%;
-        height: 100%;
-        display: flex;
-        // 左边
-        .item_left {
-          flex: 1;
-          overflow: hidden;
-          margin-left: 12rpx;
-          // 地址
-          .details {
-            margin-top: 42rpx;
-            display: flex;
-            height: 40rpx;
-            line-height: 40rpx;
-
-            // 地址描述
-            .address_word {
-              flex: 1;
-              font-size: 28rpx;
-              font-family: PingFangSC, PingFangSC-Regular;
-              font-weight: 400;
-              text-align: left;
-              color: #333333;
-              overflow: hidden;
-              text-overflow: ellipsis;
-              white-space: nowrap;
-            }
-            // 不同标签展示不同背景色
-            .active {
-              background: #fef8e7;
-            }
-          }
-          // 姓名及手机号
-          .sale {
-            margin-top: 20rpx;
-            .name,
-            .num {
-              height: 40rpx;
-              opacity: 1;
-              font-size: 28rpx;
-              font-family: PingFangSC, PingFangSC-Regular;
-              font-weight: 400;
-              text-align: left;
-              color: #999999;
-              line-height: 40rpx;
-              letter-spacing: 0px;
-            }
-            .num {
-              margin-left: 20rpx;
-            }
-          }
-        }
-        // 右边--编辑
-        .item_right {
-          width: 100rpx;
-          height: 100rpx;
-          line-height: 1;
-          text-align: right;
-          padding-right: 18rpx;
-          .edit {
-            width: 32rpx;
-            height: 32rpx;
-            padding: 24rpx;
-            margin-top: 50rpx;
-            margin-left: 20rpx;
-          }
-        }
-      }
-      // 下部
-      .list_item_bottom {
-        height: 80rpx;
-        line-height: 80rpx;
-        border-top: 1px solid #efefef;
-        .radio {
-          margin-left: 8rpx;
-          opacity: 1;
-          font-size: 26rpx;
-          font-family: PingFangSC, PingFangSC-Regular;
-          font-weight: 400;
-          text-align: left;
-          color: #333333;
-          .item_radio {
-            transform: scale(0.7);
-          }
-        }
-      }
-    }
-  }
-  // 暂无地址
-  .no_address {
-    margin: 0 auto;
-    height: 50rpx;
-    .no_word {
-      display: block;
-      text-align: center;
-      font-size: 32rpx;
-    }
-  }
-  .add_address {
-    position: fixed;
-    bottom: 40rpx;
-    left: 20rpx;
-    right: 20rpx;
-    margin: 0 auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    .add_btn {
-      width: 100%;
-      height: 86rpx;
-      line-height: 86rpx;
-      border-radius: 8rpx;
-      background: #ffc200;
-      border: 1px solid #ffc200;
-      opacity: 1;
-      font-size: 30rpx;
-      font-family: PingFangSC, PingFangSC-Medium;
-      font-weight: 600;
-      text-align: center;
-      color: #333333;
-      letter-spacing: 0px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      .add-icon {
-        font-size: 32rpx;
-        margin-right: 8rpx;
-        margin-bottom: 4rpx;
-      }
-      .img_btn {
-        width: 44rpx;
-        height: 44rpx;
-        vertical-align: middle;
-        margin-bottom: 8rpx;
-      }
-    }
-  }
-}
-.customer-box {
-  height: 100vh;
-}
+.address-page { display: block; width: 100%; max-width: 750px; min-height: 100vh; margin: 0 auto; background: #f5f6f8; color: #292929; box-sizing: border-box; }
+.page-nav { height: 54px; padding-top: env(safe-area-inset-top); display: flex; align-items: center; justify-content: space-between; background: #333; color: #fff; box-sizing: content-box; }
+.nav-back, .nav-space { width: 58px; height: 54px; display: flex; align-items: center; justify-content: center; }
+.nav-back { font-family: Arial, sans-serif; font-size: 40px; font-weight: 300; cursor: pointer; }
+.nav-title { font-size: 17px; font-weight: 600; }
+.address-content { height: calc(100vh - 54px - env(safe-area-inset-top)); padding: 14px 14px 118px; box-sizing: border-box; }
+.address-list { display: block; }
+.choose-tip { margin: 0 4px 10px; padding: 9px 12px; border-radius: 10px; background: #fff7d9; color: #7b5b00; font-size: 13px; }
+.address-card { position: relative; display: block; margin-bottom: 12px; padding: 18px 16px 0; background: #fff; border: 1px solid transparent; border-radius: 14px; box-shadow: 0 3px 14px rgba(28,31,35,.04); box-sizing: border-box; cursor: pointer; }
+.address-card.default { border-color: #f6d765; }
+.card-main { display: block; padding-right: 50px; }
+.address-line { display: flex; align-items: flex-start; gap: 9px; }
+.tag { flex: 0 0 auto; min-width: 38px; height: 23px; padding: 0 8px; display: flex; align-items: center; justify-content: center; border-radius: 6px; background: #e7f3ff; color: #2f76b7; font-size: 12px; box-sizing: border-box; }
+.tag-1 { background: #e8f5ff; color: #2672ae; }
+.tag-2 { background: #fff4cd; color: #8a6500; }
+.tag-3 { background: #e9f8ee; color: #33824e; }
+.address-text { flex: 1; min-width: 0; font-size: 16px; font-weight: 600; line-height: 24px; color: #252525; word-break: break-all; }
+.contact-line { margin-top: 12px; display: flex; align-items: center; gap: 14px; color: #777; font-size: 14px; }
+.contact-name { font-weight: 500; }
+.contact-phone { color: #8c8c8c; }
+.edit-button { position: absolute; top: 18px; right: 15px; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: #f5f6f7; color: #777; font-size: 20px; cursor: pointer; }
+.select-arrow { position: absolute; right: 17px; top: 66px; color: #bbb; font-size: 26px; }
+.card-footer { height: 50px; margin-top: 16px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #f0f1f2; }
+.default-button { display: flex; align-items: center; gap: 7px; color: #777; font-size: 13px; cursor: pointer; }
+.check-dot { width: 19px; height: 19px; display: flex; align-items: center; justify-content: center; border: 1.5px solid #c9cbd0; border-radius: 50%; box-sizing: border-box; color: transparent; font-size: 12px; }
+.default-button.checked { color: #765700; font-weight: 600; }
+.default-button.checked .check-dot { border-color: #ffc200; background: #ffc200; color: #4f3a00; }
+.default-hint { color: #aaa; font-size: 12px; }
+.state-box { height: 62vh; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #999; font-size: 14px; }
+.empty-pin { width: 78px; height: 78px; margin-bottom: 18px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: #fff4ce; color: #f2b700; font-size: 45px; }
+.empty-title { font-size: 17px; font-weight: 600; color: #555; }
+.empty-desc { margin-top: 8px; color: #999; font-size: 13px; }
+.loading-dot { width: 24px; height: 24px; margin-bottom: 12px; border: 3px solid #eee; border-top-color: #ffc200; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.bottom-action { position: fixed; z-index: 10; left: 50%; bottom: 0; width: 100%; max-width: 750px; padding: 12px 14px calc(12px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: rgba(255,255,255,.97); border-top: 1px solid #eee; box-sizing: border-box; }
+.add-button { width: 100%; height: 48px; display: flex; align-items: center; justify-content: center; border-radius: 12px; background: #ffc200; color: #2b2400; font-size: 16px; font-weight: 600; cursor: pointer; }
+.plus { margin-right: 4px; font-size: 20px; }
+::v-deep .uni-actionsheet { display: none !important; }
+@media (min-width: 751px) { .address-page { box-shadow: 0 0 30px rgba(0,0,0,.08); } .address-content { padding-left: 20px; padding-right: 20px; } }
 </style>

@@ -196,4 +196,136 @@ export default {
     height: 88rpx;
   }
 }
+
+/* #ifdef H5 */
+/* H5 specification dialog fixes */
+.more_norm_pop {
+  display: block !important;
+  box-sizing: border-box;
+  width: calc(100% - 32px) !important;
+  max-width: 520px;
+  max-height: 78vh;
+  padding: 22px !important;
+  overflow: visible;
+  border-radius: 18px !important;
+  background: #fff;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.24);
+}
+
+.more_norm_pop .title {
+  display: block !important;
+  padding: 0 42px 16px;
+  overflow: hidden;
+  color: #22252a;
+  font-size: 20px !important;
+  font-weight: 600;
+  line-height: 28px !important;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.more_norm_pop .items_cont {
+  display: block !important;
+  box-sizing: border-box;
+  width: 100%;
+  max-height: 46vh !important;
+  margin: 0 !important;
+}
+
+.more_norm_pop .item_row {
+  display: block;
+  margin-bottom: 14px;
+}
+
+.more_norm_pop .flavor_name {
+  display: block;
+  height: auto !important;
+  padding: 0 0 8px !important;
+  color: #666;
+  font-size: 14px !important;
+  line-height: 20px !important;
+}
+
+.more_norm_pop .flavor_item {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.more_norm_pop .flavor_item .item {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 76px;
+  height: 38px !important;
+  margin: 0 !important;
+  padding: 0 15px !important;
+  border: 1px solid #e6e7ea !important;
+  border-radius: 19px !important;
+  background: #f7f8fa;
+  color: #444;
+  font-size: 14px;
+  line-height: 36px !important;
+}
+
+.more_norm_pop .flavor_item .item.act {
+  border-color: #ffc200 !important;
+  background: #fff8dc !important;
+  color: #7a5700;
+  font-weight: 600;
+}
+
+.more_norm_pop .but_item {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  margin: 18px 0 0 !important;
+  padding: 16px 0 0 !important;
+  border-top: 1px solid #f0f1f3;
+}
+
+.more_norm_pop .but_item .price {
+  font-size: 25px !important;
+  line-height: 42px !important;
+}
+
+.more_norm_pop .but_item .price .ico {
+  font-size: 15px !important;
+}
+
+.more_norm_pop .but_item .active {
+  position: static !important;
+  display: block !important;
+}
+
+.more_norm_pop .dish_card_add {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 144px !important;
+  height: 44px !important;
+  border-radius: 22px !important;
+  background: #ffc200 !important;
+  color: #24262b;
+  font-size: 16px !important;
+  line-height: 44px !important;
+}
+
+.close {
+  position: absolute !important;
+  bottom: -60px !important;
+  left: 50% !important;
+  transform: translateX(-50%);
+}
+
+.close .close_img {
+  display: block;
+  width: 42px !important;
+  height: 42px !important;
+}
+/* #endif */
 </style>

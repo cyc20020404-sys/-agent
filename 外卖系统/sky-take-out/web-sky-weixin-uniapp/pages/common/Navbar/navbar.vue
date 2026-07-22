@@ -26,8 +26,10 @@ export default {
 		// 	return num
 		// }
 		ht: function () {
-			let res = uni.getMenuButtonBoundingClientRect() 
-			return res.top +5
+			const res = process.env.UNI_PLATFORM === 'h5'
+				? null
+				: uni.getMenuButtonBoundingClientRect()
+			return (res && res.top || 0) + 5
 		}
 	},
 	methods: {
