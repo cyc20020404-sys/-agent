@@ -6,7 +6,8 @@
 
 **空气技研管理平台（CAMS）**
 
-面向半导体洁净室的工业设备管理控制平台，覆盖建筑管理、AHU/VAV 空调控制、传感器数据采集四大模块，对接 HON9000 工业规范，通过 Modbus TCP 实现软件到 PLC 硬件的完整控制闭环。Vue 3 + Spring Boot + MySQL + Redis + InfluxDB + RabbitMQ + Docker。
+面向洁净室（半导体 / 医院 / 制药 / 实验室等）的空调风机（AHU）设备管理与控制平台，本人负责 AHU/VAV 空调控制、传感器数据监测两个核心模块。对接 HON9000 工业规范，通过 Modbus TCP 打通软件到 PLC 硬件的完整控制闭环，基于传感器时序数据实现运维查询与智能告警。
+技术栈：Vue 3 + Spring Boot + MySQL + Redis + RabbitMQ + InfluxDB + Docker + Python FastAPI。
 
 - **设备控制指令链路设计**：设计 HON9000 工业参数到 Modbus 寄存器的转换映射，按 autoOn/autoOff/filter 三种运行模式构建点位动作矩阵，用户在页面修改参数后自动换算并下发至 PLC，支持写入后回读校验
 
@@ -16,7 +17,9 @@
 
 - **RabbitMQ 异步解耦**：请求秒返 taskId，Consumer 异步执行；Direct Exchange 按 AHU/VAV 独立路由；死信队列处理超时异常 + 钉钉告警；Redis SETNX 幂等防重
 
-- **时序数据存储**：传感器微服务接入 InfluxDB，列式压缩应对百路传感器年 5,200 万条写入；Continuous Query 自动降采样，Retention Policy 分层管理热/温/冷数据
+- **传感器数据监测**：面向洁净室（医院病房、实验室、制药车间等）的空气质量实时监控与智能告警，采集温湿度、CO₂、洁净空气量（CADR）、滤网压力等指标；传感器数据定时同步至 InfluxDB 时序库，指令下发 ACK 状态机追踪，Continuous Query 自动降采样 + Retention Policy 分层存储
+
+- **AI 智能助手**：Function Calling 封装数据查询工具链，实现自然语言查询 + 日报自动生成；规划 RAG 接入企业知识库（使用说明/维修步骤/检测指标），升级为垂直领域运维助手
 
 ---
 
@@ -119,28 +122,49 @@
 
 ---
 
-#### ⑤ InfluxDB 时序数据存储
+#### ⑤ 传感器数据监测模块（cams-cgq）
 
-**业务场景**：洁净室部署 100+ 个粒子计数传感器，每个传感器每 60 秒上报一次 37 维测量数据（温度、湿度、CO₂、5 区 × 6 粒径颗粒物、风速、风量、压差、滤网压损）。年增约 **5,200 万条**记录。需要支持实时监控面板（查最近 1 小时原始数据）、趋势分析（查最近 3 个月按小时聚合）、审计追溯（查最近 1 年按天聚合）。MySQL 行存在这个量级下写入吞吐不足、大范围时间扫描效率低、过期数据 DELETE 产生表碎片。
+**模块定位**：面向洁净室（医院病房、实验室、制药车间等）的空气质量实时监控与智能告警平台，通过传感器采集温湿度、CO₂、洁净空气量（CADR）、滤网压力等环境指标，提供传感器管理、数据采集、指令下发、时序存储与智能预警。
 
-**完整链路**：
+**业务场景**：洁净室部署 100+ 个环境传感器，分布在 AHU 的 OA/RC/SA/DOWN/UP 五个点位，每 60 秒上报一次 37 维测量数据（温度、湿度、CO₂、颗粒物计数、风速风量、压差、滤网压损）。需要支持实时监控、趋势分析和异常预警。
 
-1. **数据生成（开发/测试阶段）** → `SensorDataGenerator.generateValues()` 基于真实物理模型模拟 → 温度用余弦函数模拟昼夜变化（中午峰值 + 高斯噪声 ±0.5℃）→ CO₂ 区分工作时间（8:00-18:00 叠加 300ppm 人体活动增量）→ 颗粒物按幂律分布 `d⁻²·⁵` × 区域缩放系数（Down=1.0×, Up=2.8×, OA=2.5×, RC=0.9×, SA=0.6×）模拟洁净室各区域洁净度梯度
-2. **定时同步 `SensorDataSyncJob`** → `@Scheduled(fixedDelay = 60000)` 每 60 秒执行 → 遍历数据库中所有 `enabled = true` 的传感器 → 逐条调用 `syncLatest(sensorId)`
-3. **InfluxDB 写入** → 组装 Line Protocol 格式：`sensor_data,sensor_id=SN-001 temperature=23.5,humidity=55.2,... 1712345678000000000` → 调用 InfluxDB Java Client 批量写入
-4. **InfluxDB 内部存储** → TSM 引擎：数据按 `series key + time` 排序存储，相同传感器数据在磁盘物理相邻 → 列式压缩（浮点序列差分编码，变化小时压缩比 10×+）→ 写入先落 WAL 再刷 TSM 文件，宕机不丢
-5. **Continuous Query 自动降采样**：
-   - CQ_1h：每 1 小时执行一次，将 raw 数据聚合为小时均值 → `mean(temperature)`, `mean(humidity)`, ... → 写入 `rp_1h` Retention Policy
-   - CQ_1d：每天凌晨执行，将 rp_1h 数据进一步聚合为日粒度 → 写入 `rp_1d`
-6. **Retention Policy 数据生命周期管理**：
-   - `rp_raw`：保留 7 天，1 分钟原始数据 → 实时监控面板
-   - `rp_1h`：保留 90 天，小时级聚合 → 趋势分析、异常回溯
-   - `rp_1d`：保留 365 天，日级聚合 → 审计合规
-   - 过期数据被 InfluxDB 引擎自动删除（后台异步，不阻塞写入查询）
-7. **查询自动路由** → `SensorDataController` 收到请求 → 根据请求时间范围自动选择最优 RP → 最近 1 天查 rp_raw，最近 3 个月查 rp_1h，一年查 rp_1d → 用户无感知
-8. **数据标记为离线** → 同步失败的传感器调用 `updateOnlineStatus(sensorId, "offline")` → 前端面板显示红色离线标记
+**完整链路（已实现）**：
 
-> **关键文件**：`SensorDataSyncJob`（定时任务）、`SensorDataServiceImpl`（业务层）、`SensorDataGenerator`（模拟数据）、InfluxDB CQ + RP 配置
+1. **传感器注册管理** → `SensorController` 提供传感器 CRUD → `sensors` 表记录 sensor_id（19~20 位 ICCID）、类型（ENVIRONMENTAL/PARTICLE/AIRFLOW/COMBINED）、安装点位（OA/RC/SA/DOWN/UP）、tags 分组、`sync_enabled` / `sync_interval` 采集开关
+2. **数据生成（开发/测试阶段）** → `SensorDataGenerator` 基于真实物理模型模拟 → 温度用余弦函数模拟昼夜变化（中午峰值 + 高斯噪声 ±0.5℃）→ CO₂ 区分工作时间（8:00-18:00 叠加 300ppm 人体活动增量）→ 颗粒物按幂律分布 `d⁻²·⁵` × 区域缩放系数（Down=1.0×, Up=2.8×, OA=2.5×, RC=0.9×, SA=0.6×）模拟洁净室各区域洁净度梯度
+3. **定时同步 `SensorDataSyncJob`** → `@Scheduled(fixedDelay = 60000)` 每 60 秒遍历 `sync_enabled=true` 的传感器 → 逐条同步测定值 → 写入 `sensor_measurements` 表（37 维 + raw_data 原始 JSON + data_quality 质量标记）
+4. **指令下发与 ACK 追踪** → `SensorCommandController` 下发指令 → `sensor_commands` 表记录 cmd_id、op、arg、expires → ACK 状态机（pending → sent → acked / failed / timeout / expired）→ 定时轮询 ACK 直到超时
+5. **MySQL 分区维护** → `PartitionMaintenanceJob` 定期对 `sensor_measurements` 按时间分区（partition by range），过期分区直接 DROP 而非逐行 DELETE，避免表碎片
+6. **离线标记** → 同步失败的传感器调用 `updateOnlineStatus(sensorId, "offline")` → 前端面板显示红色离线标记
+
+**规划 / 待实现**（技术上已论证，后续落地）：
+
+- **InfluxDB 时序存储升级**：当前数据存 MySQL，量级上来后写入吞吐与大范围时间扫描会成为瓶颈。规划迁移 InfluxDB——Line Protocol 写入 → TSM 引擎列式压缩（10×+）→ Continuous Query 自动降采样（1h/1d）→ Retention Policy 分层（raw 7 天 / 1h 90 天 / 1d 365 天），查询按时间范围自动路由到最优 RP
+- **预警引擎**：`sensors.alarm_config` 已预留阈值配置字段。规划实现三级判定——阈值判断 + 毛刺过滤（异常持续 ≥30s 才触发，过滤开门等瞬时波动）+ 冷却去重（同指标 300s 内不重复推送）→ Redis 发布告警 → WebSocket 推送前端 + 多渠道通知
+
+> **关键文件**：`SensorController`、`SensorDataSyncJob`、`SensorCommandController`、`PartitionMaintenanceJob`、`SensorDataGenerator`
+
+---
+
+#### ⑥ AI 智能助手（系统级，RAG 垂直领域）
+
+**模块定位**：不止于定时报告，而是面向整个 CAMS 的垂直领域运维助手——基于企业知识库（设备使用说明、维修步骤、检测指标标准）做检索增强（RAG），让运维人员用自然语言完成查询、诊断与决策。
+
+**已实现（Python 侧）**：
+
+- **Function Calling 工具链**：封装 5 个数据查询工具（query_rooms / query_stats / query_alerts / query_room_trend / query_anomaly_rooms），模型先决策调用哪个工具 → 执行 → 二次调用 LLM 生成自然语言回复。解决 LLM 自由文本无法直接对接数据库、结果不可控的问题
+- **日报自动生成**：每日 08:00 定时汇总统计 + 异常 + 告警历史，拼装 Prompt 由 DeepSeek 生成 Markdown 日报，多渠道推送（定时任务能做的只是"到点推送"，日报的内容组织靠 LLM 而非硬编码模板）
+
+**规划 / 待实现（RAG 知识库）**：
+
+1. **文档切分**：将企业知识库（设备使用说明、维修手册、检测指标标准、SOP）切分为语义块
+2. **向量化 + 入库**：embedding 模型将文本块转为向量，存入向量库（Milvus / FAISS）
+3. **检索增强**：用户提问 → 向量检索 Top-K 相关文档 → 拼入 Prompt → LLM 生成带出处的回答
+4. **知识库范围**：设备使用说明、维修步骤、检测指标阈值标准、历史告警处置记录
+
+> **为什么是 RAG 而非微调**：企业知识库会随设备型号、检测标准持续更新，微调每次都要重训、成本高且时效差；RAG 只需更新向量库，检索结果带出处可追溯，更适合企业知识库频繁更新的场景。
+
+> **技术栈**：Python FastAPI + DeepSeek（Function Calling）+ 向量数据库（规划）
 
 ---
 
@@ -150,13 +174,15 @@
 
 | 层级 | 技术 | 用途 |
 |------|------|------|
-| 后端框架 | Spring Boot 2.7 | 主应用 + 微服务 |
+| 后端框架 | Spring Boot 2.7 | 主应用 + 传感器微服务（cams-cgq） |
 | ORM | MyBatis-Plus | 数据访问层 |
-| 关系数据库 | MySQL 8.0 | 业务数据 + 设备状态 |
+| 关系数据库 | MySQL 8.0 | 业务数据 + 设备状态 + 传感器时序（分区） |
 | 缓存 | Redis 7 | 缓存 + Pub/Sub + 幂等键 |
-| 时序数据库 | InfluxDB | 传感器时序数据存储 |
 | 消息队列 | RabbitMQ | 控制指令异步解耦 |
 | 实时推送 | WebSocket + STOMP | 设备状态实时推送 |
+| 时序数据库 | InfluxDB（规划） | 传感器时序存储升级，CQ 降采样 + RP 分层 |
+| AI / LLM | Python FastAPI + DeepSeek | AI 助手（Function Calling）+ RAG（规划） |
+| 向量数据库 | Milvus / FAISS（规划） | RAG 知识库检索 |
 | 前端 | Vue 3 + TypeScript + Element Plus | 管理后台 |
 | 部署 | Docker Compose + Nginx | 容器化部署 |
 
@@ -422,7 +448,7 @@ T+30s   定时扫描 → 重试 → 成功 → 状态改为 pending → 消费�
 
 ---
 
-### 5. InfluxDB 时序数据存储
+### 5. 传感器数据监测 + InfluxDB 时序存储（规划）
 
 #### 5.1 为什么用时序数据库
 
@@ -484,36 +510,75 @@ END
 
 ---
 
+### 6. AI 智能助手（RAG）
+
+#### 6.1 为什么用 Function Calling 而不是自由文本
+
+LLM 直接生成 SQL / JSON 是不可控的：字段名可能错、格式不稳定、甚至幻觉出不存在的表。Function Calling 把"能做什么"定义成受控的工具接口，模型只负责"决策调用哪个工具 + 传什么参数"，实际查询由代码执行，返回结构化 JSON 再交给模型组织语言。两轮调用链：
+
+```
+用户输入 → LLM 决策 tool_calls → 执行工具 → LLM 生成自然语言回复
+```
+
+#### 6.2 RAG 完整链路
+
+```
+① 文档切分：知识库按语义块切分（chunk）
+② 向量化：embedding 模型将文本块转为向量
+③ 入库：向量 + 原文存入向量库（Milvus / FAISS）
+④ 检索：用户问题向量化 → 相似度检索 Top-K
+⑤ 生成：检索到的文档块拼入 Prompt → LLM 生成带出处的回答
+```
+
+#### 6.3 面试追问预期
+
+**Q: RAG 和微调怎么选？**
+
+> 知识库频繁更新 → RAG：更新向量库即可，成本低、时效好、答案带出处可追溯。知识库稳定且需要模型"内化"领域术语/风格 → 微调。本场景设备手册、检测标准持续更新，选 RAG。
+
+**Q: 检索不准怎么办？**
+
+> 分块策略调优（语义块大小）、混合检索（向量 + 关键词 BM25）、召回后重排（rerank）、Prompt 里加"仅依据提供的文档回答，不知道就说不知道"约束幻觉。
+
+**Q: 为什么不用定时任务生成日报，非要用 LLM？**
+
+> 定时任务只能"到点触发"，日报的内容组织（哪些异常值得写、怎么表述、按什么优先级排序）靠 LLM 从原始数据中提炼，而不是硬编码模板拼字符串。LLM 的价值在"内容生成"，定时调度只是触发器。
+
+---
+
 ## 四、系统架构总图
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
 │                         前端 Vue 3                              │
-│   Dashboard │ 设备管理 │ Modbus面板 │ 传感器 │ 日志查询         │
+│   Dashboard │ 设备管理 │ Modbus面板 │ 传感器 │ AI助手 │ 日志查询 │
 └──────────────┬─────────────────────────────────────────────────┘
                │ Nginx :10027 → :8080
 ┌──────────────▼─────────────────────────────────────────────────┐
 │                    Spring Boot (CAMS)                           │
 │                                                                 │
-│  ┌─ 设备控制 ────┐  ┌─ Modbus模块 ─┐  ┌─ 传感器模块 ─┐        │
-│  │ EquipmentCtrl │  │ ModbusConv   │  │ SensorData   │        │
-│  │ + 多线程并发   │  │ Service      │  │ + InfluxDB   │        │
-│  │ + 快照回滚    │  │ 协议转换引擎  │  │              │        │
-│  └───────┬───────┘  └──────┬───────┘  └──────┬───────┘        │
+│  ┌─ 设备控制 ────┐  ┌─ Modbus模块 ─┐  ┌─ 传感器模块(cams-cgq) ┐│
+│  │ EquipmentCtrl │  │ ModbusConv   │  │ SensorData            ││
+│  │ + 多线程并发   │  │ Service      │  │ + MySQL分区(→InfluxDB) ││
+│  │ + 快照回滚    │  │ 协议转换引擎  │  │ + 指令下发/ACK        ││
+│  └───────┬───────┘  └──────┬───────┘  └──────┬───────────────┘│
 │          │                 │                  │                 │
 └──────────┼─────────────────┼──────────────────┼─────────────────┘
            │                 │                  │
-    ┌──────▼──────┐  ┌──────▼──────┐  ┌───────▼──────┐
-    │   MySQL     │  │  PLC 硬件   │  │  InfluxDB    │
-    │  + Redis   │  │ 10.168.1.8  │  │              │
-    │  + RabbitMQ│  │  :502       │  │              │
-    └─────────────┘  └─────────────┘  └──────────────┘
+    ┌──────▼──────┐  ┌──────▼──────┐  ┌───────▼──────┐  ┌───────────────┐
+    │   MySQL     │  │  PLC 硬件   │  │ MySQL(分区)  │  │ Python AI 服务 │
+    │  + Redis   │  │ 10.168.1.8  │  │ → InfluxDB   │  │ FastAPI        │
+    │  + RabbitMQ│  │  :502       │  │   (规划)     │  │ + DeepSeek     │
+    └─────────────┘  └─────────────┘  └──────────────┘  │ + RAG向量库    │
+                                                         │   (规划)      │
+                                                         └───────────────┘
 
 数据流：
   HON9000 参数 → MySQL → RabbitMQ → Consumer → Modbus TCP → PLC
                                                 ↓ 回读
                                    Redis Pub/Sub → WebSocket → 前端
-  传感器模拟 → InfluxDB → API → 前端图表
+  传感器模拟 → MySQL(分区) → API → 前端图表        (→ InfluxDB 规划)
+  AI：自然语言 → DeepSeek Function Calling → 查询 DB → 回复   (RAG 规划)
 ```
 
 ---
@@ -562,12 +627,21 @@ END
 - 重复消费怎么解决（幂等键）
 - RabbitMQ vs Kafka 核心定位差异
 
-### InfluxDB / 时序数据库
+### InfluxDB / 时序数据库（规划）
 
 - 时序数据库的核心优化点（列式存储、时间排序、降采样、自动过期）
 - InfluxDB Line Protocol + Tag vs Field 设计
 - Continuous Query + Retention Policy 配合
 - InfluxDB vs TDengine vs TimescaleDB 选型对比
+- MySQL 分区表 vs 时序数据库的边界（什么时候必须换）
+
+### AI / LLM / RAG
+
+- Function Calling 原理（工具定义 → 模型决策 → 工具执行 → 二次生成）
+- RAG 完整链路（文档切分 → 向量化 → 检索 → 增强生成）
+- RAG vs 微调（知识库时效性、成本、可追溯性）
+- 向量检索：embedding / 余弦相似度 / Top-K / 召回 vs 精排
+- LLM 输出不可控的应对（结构化工具调用、受控 JSON）
 
 ---
 
