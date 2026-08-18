@@ -74,126 +74,104 @@ export default {
 </script>
 <style lang="scss" scoped>
 .more_norm_pop {
-  width: calc(100vw - 160rpx);
-  box-sizing: border-box;
-  position: relative;
+  position: absolute;
   top: 50%;
   left: 50%;
-  padding: 40rpx;
-  transform: translateX(-50%) translateY(-50%);
+  transform: translate(-50%, -50%);
+  width: 560rpx;
+  max-width: 90%;
+  padding: 36rpx;
   background: #fff;
   border-radius: 20rpx;
-  .div_big_image {
-    width: 100%;
-    border-radius: 10rpx;
-  }
+  box-sizing: border-box;
+
   .title {
-    font-size: 40rpx;
-    line-height: 80rpx;
+    font-size: 36rpx;
+    font-weight: 600;
+    color: #1A1A1A;
+    line-height: 64rpx;
     text-align: center;
-    font-weight: bold;
   }
+
   .items_cont {
-    display: flex;
-    flex-wrap: wrap;
-    margin-left: -14rpx;
     max-height: 50vh;
+    overflow-y: auto;
+
     .item_row {
       .flavor_name {
-        height: 40rpx;
-        opacity: 1;
-        font-size: 28rpx;
-        font-family: PingFangSC, PingFangSC-Regular;
-        font-weight: 400;
-        text-align: left;
-        color: #666666;
-        line-height: 40rpx;
-        padding-left: 10rpx;
-        padding-top: 20rpx;
+        font-size: 26rpx;
+        color: #5C5C5C;
+        line-height: 36rpx;
+        padding: 20rpx 0 8rpx 8rpx;
       }
+
       .flavor_item {
         display: flex;
         flex-wrap: wrap;
+        gap: 12rpx;
+
         .item {
-          border: 1px solid #ffb302;
-          border-radius: 12rpx;
-          margin: 20rpx 10rpx;
-          padding: 0 26rpx;
-          height: 60rpx;
-          line-height: 60rpx;
-          font-family: PingFangSC, PingFangSC-Regular;
-          font-weight: 400;
-          color: #333333;
+          border: 1rpx solid #FFC200;
+          border-radius: 8rpx;
+          padding: 0 20rpx;
+          height: 52rpx;
+          line-height: 52rpx;
+          font-size: 24rpx;
+          color: #1A1A1A;
         }
+
         .act {
-          // background: linear-gradient(144deg, #ffda05 18%, #ffb302 80%);
-          background: #ffc200;
-          border: 1px solid #ffc200;
-          font-family: PingFangSC, PingFangSC-Medium;
-          font-weight: 500;
+          background: #FFC200;
+          border-color: #FFC200;
+          font-weight: 600;
         }
       }
     }
   }
+
   .but_item {
     display: flex;
+    align-items: center;
     position: relative;
-    flex: 1;
-    padding-left: 10rpx;
-    margin: 34rpx 0 -20rpx 0;
+    margin-top: 28rpx;
+
     .price {
-      text-align: left;
-      color: #e94e3c;
-      line-height: 88rpx;
-      box-sizing: border-box;
-      font-size: 48rpx;
-      font-family: DIN, DIN-Medium;
-      font-weight: 500;
-      .ico {
-        font-size: 28rpx;
-      }
+      font-size: 44rpx;
+      font-weight: 600;
+      color: #E94E3C;
+      .ico { font-size: 26rpx; }
     }
+
     .active {
       position: absolute;
-      right: 0rpx;
-      bottom: 20rpx;
-      display: flex;
-      .dish_add,
-      .dish_red {
-        display: block;
-        width: 72rpx;
-        height: 72rpx;
-      }
-      .dish_number {
-        padding: 0 10rpx;
-        line-height: 72rpx;
-        font-size: 30rpx;
-        font-family: PingFangSC, PingFangSC-Medium;
-        font-weight: 500;
-      }
+      right: 0;
+      bottom: 0;
+
       .dish_card_add {
-        width: 200rpx;
-        height: 60rpx;
-        line-height: 60rpx;
-        text-align: center;
-        font-weight: 500;
-        font-size: 28rpx;
-        opacity: 1;
-        // background: linear-gradient(144deg, #ffda05 18%, #ffb302 80%);
-        background: #ffc200;
-        border-radius: 30rpx;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 176rpx;
+        height: 56rpx;
+        font-size: 26rpx;
+        font-weight: 600;
+        color: #1A1A1A;
+        background: #FFC200;
+        border-radius: 28rpx;
       }
     }
   }
 }
+
 .close {
   position: absolute;
-  bottom: -180rpx;
+  bottom: -150rpx;
   left: 50%;
   transform: translateX(-50%);
+
   .close_img {
-    width: 88rpx;
-    height: 88rpx;
+    width: 72rpx;
+    height: 72rpx;
   }
 }
 </style>

@@ -74,6 +74,11 @@ public class UserServiceImpl implements UserService {
      * @return openId
      */
     private String getOpenid(String code) {
+        // H5 开发模式：跳过微信接口，使用固定 openid
+        if (code != null && code.startsWith("h5-dev-code-")) {
+            return "h5_dev_openid_" + code.substring("h5-dev-code-".length());
+        }
+
         //调用微信接口服务，获得当前微信用户的openid
         Map<String, String> map = new HashMap<>();
         map.put("appid", weChatProperties.getAppid());

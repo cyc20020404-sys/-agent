@@ -144,6 +144,15 @@ const router = new Router({
             title: "AI客服助手",
             icon: "icon-chat"
           }
+        },
+        {
+          path: "human-service",
+          component: () =>
+            import(/* webpackChunkName: "humanService" */ "@/views/humanService/index.vue"),
+          meta: {
+            title: "人工客服",
+            icon: "icon-service"
+          }
         }
       ]
     },

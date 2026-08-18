@@ -1,6 +1,51 @@
 <script>
 export default {
   onLaunch: function () {
+    // #ifdef H5
+    // H5桌面端适配：将根字体大小限制为模拟480px手机视口，解决rpx在宽屏上渲染过大的问题
+    var setRootFontSize = function() {
+      var MAX_WIDTH = 480
+      var w = Math.min(document.documentElement.clientWidth, MAX_WIDTH)
+      document.documentElement.style.fontSize = (w / 20) + 'px'
+    }
+    setRootFontSize()
+    window.addEventListener('resize', setRootFontSize)
+    // H5环境补丁：模拟缺失的微信API
+    if (!window.wx) {
+      window.wx = {
+        getMenuButtonBoundingClientRect: function() {
+          return { top: 0, height: 44, width: 87 }
+        }
+      }
+    }
+    if (typeof uni !== 'undefined' && !uni.getMenuButtonBoundingClientRect) {
+      uni.getMenuButtonBoundingClientRect = function() {
+        return { top: 0, height: 44, width: 87 }
+      }
+    }
+    // 自动登录（同步）：确保页面getData()执行前token已就位
+    try {
+      var xhr = new XMLHttpRequest()
+      xhr.open('POST', 'http://localhost:8080/user/user/login', false)
+      xhr.setRequestHeader('Content-Type', 'application/json')
+      xhr.send(JSON.stringify({ code: 'h5-dev-code-' + Date.now(), location: '116.481488,39.990464' }))
+      if (xhr.status === 200) {
+        var resp = JSON.parse(xhr.responseText)
+        if (resp.code === 1 && resp.data) {
+          var d = resp.data
+          this.$store.commit('setToken', d.token)
+          this.$store.commit('setDeliveryFee', d.deliveryFee)
+          this.$store.commit('setShopInfo', {
+            shopName: d.shopName, shopAddress: d.shopAddress,
+            description: d.description, shopId: d.shopId
+          })
+          this.$store.commit('setBaseUserInfo', { nickName: 'H5用户', avatarUrl: '', gender: 0 })
+        }
+      }
+    } catch (e) {
+      console.log('H5 auto-login failed:', e)
+    }
+    // #endif
   },
   onShow: function () {
   },
@@ -20,6 +65,32 @@ export default {
 @media screen and (min-width: 768px) {
   body {
     overflow-y: scroll;
+  }
+
+  /* H5桌面端：手机视口模拟，限制最大宽度 */
+  body {
+    display: flex;
+    justify-content: center;
+    background: #e8e8e8 !important;
+  }
+
+  uni-app {
+    width: 100%;
+    max-width: 480px;
+    min-height: 100vh;
+    overflow-x: hidden;
+    box-shadow: 0 0 40px rgba(0,0,0,0.12);
+    position: relative;
+    background: #efeff4;
+  }
+
+  /* 图片自适应 — 防止H5桌面超大图 */
+  image {
+    max-width: 100%;
+  }
+
+  uni-page-body {
+    overflow-x: hidden;
   }
 }
 
@@ -86,7 +157,7 @@ page {
 /*checkbox 选项框大小  */
 /* uni-checkbox .uni-checkbox-input {
 		width: 30rpx !important;
-		height: 30rpx !important; 
+		height: 30rpx !important;
 	} */
 /*checkbox选中后样式  */
 /* uni-checkbox .uni-checkbox-input.uni-checkbox-input-checked {
@@ -96,7 +167,7 @@ page {
 /*checkbox选中后图标样式  */
 /* uni-checkbox .uni-checkbox-input.uni-checkbox-input-checked::before {
 		width: 20rpx;
-		height: 20rpx;  
+		height: 20rpx;
 		line-height: 20rpx;
 		text-align: center;
 		font-size: 18rpx;

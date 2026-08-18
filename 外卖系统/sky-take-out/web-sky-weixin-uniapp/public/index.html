@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
+    <title>苍穹外卖</title>
+    <script>
+      (function() {
+        var MAX = 480;
+        function lock() {
+          var w = Math.min(document.documentElement.clientWidth, window.innerWidth, MAX);
+          document.documentElement.style.fontSize = (w / 20) + 'px';
+        }
+        lock();
+        var ob = new MutationObserver(function(ms) {
+          for (var i = 0; i < ms.length; i++) {
+            if (ms[i].attributeName === 'style') { lock(); break; }
+          }
+        });
+        ob.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+        window.addEventListener('resize', function() { setTimeout(lock, 10); });
+        setInterval(function() {
+          var cur = parseFloat(document.documentElement.style.fontSize);
+          if (!isNaN(cur) && cur > 24.5) { lock(); }
+        }, 200);
+      })();
+    </script>
+    <style>
+      @media screen and (min-width: 768px) {
+        html, body {
+          background: #e8e8e8 !important;
+          overflow-x: hidden !important;
+        }
+
+        /* ── 1. 主体容器：480px 居中 ── */
+        #app {
+          max-width: 480px !important;
+          margin: 0 auto !important;
+          overflow-x: hidden !important;
+          box-shadow: 0 0 30px rgba(0,0,0,0.12) !important;
+          background: #efeff4 !important;
+          min-height: 100vh !important;
+        }
+
+        /* ── 2. 隐藏 uni-app 桌面侧边栏 ── */
+        .uni-app--showleftwindow .uni-left-window,
+        .uni-app--showrightwindow .uni-right-window {
+          display: none !important;
+        }
+
+        /* ── 3. uni-nav-bar fixed 居中 ──
+           原理: #app 是 margin:auto 居中的，position:fixed 不认父容器
+           用 left:50% 到视口中线，再 margin-left:-240px 对齐 #app 左边缘
+           #app 左边缘 = (100vw - 480)/2 = 50vw - 240px
+           left: 50vw; margin-left: -240px → 正好对齐
+        ── */
+        .uni-navbar {
+          max-width: 480px !important;
+          left: 50% !important;
+          right: auto !important;
+          margin-left: -240px !important;
+        }
+
+        /* ── 4. 底部结算栏 ── */
+        .footer_order_buttom {
+          max-width: 420px !important;
+          left: 50% !important;
+          right: auto !important;
+          margin-left: -210px !important;
+        }
+
+        /* ── 5. 弹出遮罩 ── */
+        .pop_mask {
+          max-width: 480px !important;
+          left: 50% !important;
+          right: auto !important;
+          margin-left: -240px !important;
+        }
+
+        /* ── 6. 打烊遮罩 ── */
+        .colseShop {
+          max-width: 480px !important;
+          left: 50% !important;
+          right: auto !important;
+          margin-left: -240px !important;
+        }
+
+        /* ── 7. 图片不溢出 ── */
+        image, img {
+          max-width: 100% !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>

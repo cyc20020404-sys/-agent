@@ -114,11 +114,15 @@ export default {
 			return orderData
 		},
 		ht: function () {
-			return (
-				uni.getMenuButtonBoundingClientRect().top +
-				uni.getMenuButtonBoundingClientRect().height +
-				7
-			)
+			try {
+				return (
+					uni.getMenuButtonBoundingClientRect().top +
+					uni.getMenuButtonBoundingClientRect().height +
+					7
+				)
+			} catch (e) {
+				return 44 // H5 fallback navbar height
+			}
 		},
 	},
 
@@ -178,84 +182,101 @@ export default {
 				})
 			})
 		},
+		// 运行时判断是否H5环境（uni-app条件编译不处理外部js文件）
+		isH5Env() {
+			try {
+				if (typeof wx !== 'undefined' && wx.getMenuButtonBoundingClientRect) return false
+			} catch (e) {}
+			return true
+		},
 		// 获取用户信息
 		getData() {
-			let res = wx.getMenuButtonBoundingClientRect()
+			let res = { height: 0 }
+			try { res = wx.getMenuButtonBoundingClientRect() } catch (e) {}
 			let _this = this
 			// 获取店铺状态
 			this.getShopInfo()
-			this.selectHeight = res.height
+			this.selectHeight = res.height || 44
 			if (this.token() === "") {
-				uni.showModal({
-					title: "温馨提示",
-					content: "亲，授权微信登录后才能点餐！",
-					showCancel: false,
-					success(res) {
-						if (res.confirm) {
-							let jsCode = ""
-							uni.login({
-								provider: "weixin",
-								success: (loginRes) => {
-									if (loginRes.errMsg === "login:ok") {
-										jsCode = loginRes.code
+				if (this.isH5Env()) {
+					// H5 浏览器环境：直接调用后端登录获取token
+					let h5Code = "h5-dev-code-" + Date.now()
+					uni.showModal({
+						title: "H5开发模式",
+						content: "此环境仅用于开发调试，确认继续？",
+						showCancel: false,
+						success: function () {
+							userLogin({ code: h5Code, location: "116.481488,39.990464" })
+								.then((success) => {
+									if (success.code === 1) {
+										_this.setToken(success.data.token)
+										_this.setDeliveryFee(success.data.deliveryFee)
+										_this.setShopInfo({
+											shopName: success.data.shopName,
+											shopAddress: success.data.shopAddress,
+											description: success.data.description,
+											shopId: success.data.shopId,
+										})
+										_this.setBaseUserInfo({ nickName: "H5用户", avatarUrl: "", gender: 0 })
+										_this.init()
 									}
-								},
-							})
-							// 授权
-							uni.getUserProfile({
-								desc: "登录",
-								success: function (userInfo) {
-									_this.setBaseUserInfo(userInfo.userInfo)
-									const params = {
-										code: jsCode,
-										// 传递地理位置信息
-									}
-									// 获取定位信息
-									uni.getLocation({
-										type: 'gcj02', isHighAccuracy: true
-									}).then(([err, result]) => {
-										if (err) {
-											uni.showToast({
-												title: "获取地理位置失败",
-												icon: "none"
-											})
-										} else {
-											if (process.env.NODE_ENV === '"development"') {
-												params.location = `116.481488,39.990464`//	先写死在北京
-											} else {
-												params.location = `${result.longitude},${result.latitude}`
-											}
-
-											userLogin(params)
-												.then((success) => {
-													if (success.code === 1) {
-														_this.setToken(success.data.token)
-														// 保存配送费
-														_this.setDeliveryFee(success.data.deliveryFee)
-														// 保存商铺信息
-														_this.setShopInfo({
-															shopName: success.data.shopName,
-															shopAddress: success.data.shopAddress,
-															description: success.data.description,
-															shopId: success.data.shopId,
-														})
-														_this.init()
-													}
-												})
-												.catch((err) => { })
-
-
-
-										}
-
-									})
-
-								},
-								fail: function (err) { },
-							})
+								})
+								.catch(() => {
+									uni.showToast({ title: "登录失败，请确认后端服务已启动", icon: "none" })
+								})
 						}
-					},
-				})
+					})
+				} else {
+					// 微信小程序
+					uni.showModal({
+						title: "温馨提示",
+						content: "亲，授权微信登录后才能点餐！",
+						showCancel: false,
+						success(res) {
+							if (res.confirm) {
+								let jsCode = ""
+								uni.login({
+									provider: "weixin",
+									success: (loginRes) => {
+										if (loginRes.errMsg === "login:ok") jsCode = loginRes.code
+									},
+								})
+								uni.getUserProfile({
+									desc: "登录",
+									success: function (userInfo) {
+										_this.setBaseUserInfo(userInfo.userInfo)
+										var params = { code: jsCode, location: "116.481488,39.990464" }
+										try {
+											uni.getLocation({ type: 'gcj02', isHighAccuracy: true }).then(function (resArr) {
+												var result = resArr[1] || resArr
+												if (result && result.longitude) {
+													params.location = result.longitude + "," + result.latitude
+												}
+												doUserLogin(params)
+											}).catch(function () { doUserLogin(params) })
+										} catch (e) { doUserLogin(params) }
+										function doUserLogin(p) {
+											userLogin(p).then(function (success) {
+												if (success.code === 1) {
+													_this.setToken(success.data.token)
+													_this.setDeliveryFee(success.data.deliveryFee)
+													_this.setShopInfo({
+														shopName: success.data.shopName,
+														shopAddress: success.data.shopAddress,
+														description: success.data.description,
+														shopId: success.data.shopId,
+													})
+													_this.init()
+												}
+											}).catch(function () {})
+										}
+									},
+									fail: function () {},
+								})
+							}
+						},
+					})
+				}
 			}
 		},
 

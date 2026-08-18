@@ -1,6 +1,6 @@
 <template>
 	<view class="box">
-		<image class="food_image" :src="item.food_image"></image>
+		<image class="food_image" :src="item.food_image" mode="aspectFill"></image>
 		<view class="content">
 			<view class="title">{{item.food_name}}</view>
 			<view class="foodNum">月售{{item.num}}</view>

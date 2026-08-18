@@ -3,7 +3,7 @@
     <view class="my_info">
         <!-- 头像部分 -->
         <view class="head">
-          <image class="head_image" :src="psersonUrl"></image>
+          <image class="head_image" :src="psersonUrl" mode="aspectFill"></image>
         </view>
         <!-- 姓名及手机号 -->
         <view class="phone_name">

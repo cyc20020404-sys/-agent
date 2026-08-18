@@ -36,7 +36,7 @@
                   <scroll-view scroll-x="true" class="pic" style="width: 100%; overflow: hidden; white-space: nowrap">
                     <view class="food_num_item" v-for="(num, y) in item.orderDetailList" :key="y">
                       <view class="img">
-                        <image :src="num.image"></image>
+                        <image :src="num.image" mode="aspectFill"></image>
                       </view>
                       <view class="food">{{ num.name }}</view>
                     </view>
@@ -307,7 +307,7 @@ export default {
   background-color: #fff;
   padding: 0 30rpx;
   box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.06);
-  width: 100vw;
+  width: 100%;
   box-sizing: border-box;
   flex-wrap: nowrap;
   overflow: auto;

@@ -1,9 +1,9 @@
 <template>
-  <view>
+  <view class="page-root">
     <!-- 导航 -->
     <navBar></navBar>
     <!-- end -->
-    <view class="home_content" :style="{ paddingTop: ht + 'px' }" @touchmove.stop.prevent="disabledScroll">
+    <view class="home_content" @touchmove.stop.prevent="disabledScroll">
       <!-- 店铺基本信息 -->
       <view class="restaurant_info_box">
         <view class="restaurant_info">
@@ -97,7 +97,7 @@
           <view v-if="typeListData.length > 0">该分类下暂无菜品</view>
         </view>
       </view>
-      <view class="restaurant_close">店铺已打烊</view>
+      <view class="restaurant_close" v-else>店铺已打烊</view>
       <!-- end -->
       <view class="mask-box"></view>
       <!-- 底部去结算 -->

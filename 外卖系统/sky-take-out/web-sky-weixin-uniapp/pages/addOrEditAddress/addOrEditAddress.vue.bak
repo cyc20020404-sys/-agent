@@ -18,10 +18,12 @@
       <form class="form_address">
         <view class="uni-form-item uni-column form_item">
           <view class="title">联系人:</view>
-          <input
-            class="addr-input"
+          <uni-easyinput
+            class="uni-input"
             v-model="form.name"
+            placeholder-class="uni-place"
             placeholder="请填写收货人的姓名"
+            minlength="2"
             maxlength="12"
           />
           <view class="radio">
@@ -47,11 +49,13 @@
         </view>
         <view class="uni-form-item uni-column form_item">
           <view class="title">手机号:</view>
-          <input
-            class="addr-input"
+          <uni-easyinput
+            class="uni-input"
             v-model="form.phone"
             type="number"
+            placeholder-class="uni-place"
             placeholder="请填写收货人手机号码"
+            maxlength="11"
           />
         </view>
         <view class="uni-form-item uni-column form_item pad">
@@ -430,24 +434,29 @@ export default {
       .uni-input {
         flex: 1;
       }
-      .addr-input {
-        flex: 1;
-        height: 72rpx;
-        line-height: 72rpx;
-        border: 1px solid #dcdfe6;
-        border-radius: 8rpx;
-        padding: 0 16rpx;
-        font-size: 28rpx;
-        color: #333;
-        background: #fff;
+      // 输入框可见样式
+      ::v-deep .uni-easyinput__content {
+        min-height: 72rpx;
+      }
+      ::v-deep .is-input-border {
+        border: 1px solid #dcdfe6 !important;
+        border-radius: 4px;
+        min-height: 72rpx;
         box-sizing: border-box;
       }
-      .addr-input::placeholder {
-        font-size: 26rpx;
-        color: #999;
+      ::v-deep .uni-easyinput__content-input {
+        height: 72rpx !important;
+        line-height: 72rpx !important;
+        padding-left: 10px !important;
+        font-size: 28rpx;
       }
-      .addr-input:focus {
-        border-color: #ffc200;
+      ::v-deep .uni-easyinput__placeholder-class {
+        font-size: 26rpx;
+        line-height: 72rpx;
+      }
+      ::v-deep .uni-place {
+        font-size: 26rpx;
+        color: #999999 !important;
       }
       .radio {
         font-size: 26rpx;

@@ -19,7 +19,7 @@
             <scroll-view scroll-x="true" class="pic" style="width: 100%; overflow: hidden; white-space: nowrap">
               <view class="food_num_item" v-for="(num, y) in item.orderDetailList" :key="y">
                 <view class="img">
-                  <image :src="num.image"></image>
+                  <image :src="num.image" mode="aspectFill"></image>
                   <!-- <image src="../../static/img2.jpg"></image> -->
                 </view>
                 <view class="food">{{ num.name }}</view>

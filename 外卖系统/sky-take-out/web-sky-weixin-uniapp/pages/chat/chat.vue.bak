@@ -20,15 +20,12 @@
       :scroll-with-animation="true"
       @scrolltolower="onScrollToLower"
     >
-      <view v-if="messages.length === 0 && !streamingText && !loading" class="chat-empty">
-        <image v-if="!isEscalated" src="/static/chat-icon.png" mode="aspectFit" class="empty-icon" />
-        <image v-else src="/static/chat-icon.png" mode="aspectFit" class="empty-icon" style="opacity:0.4" />
-        <text v-if="!isEscalated" class="empty-text">您好！我是苍穹外卖的AI客服助手</text>
-        <text v-else class="empty-text">人工客服对话中</text>
-        <text v-if="!isEscalated" class="empty-sub">您可以问我关于订单、菜品、配送等问题</text>
-        <text v-else class="empty-sub">正在连接客服，请稍候...</text>
+      <view v-if="messages.length === 0 && !streamingText" class="chat-empty">
+        <image src="/static/chat-icon.png" mode="aspectFit" class="empty-icon" />
+        <text class="empty-text">您好！我是苍穹外卖的AI客服助手</text>
+        <text class="empty-sub">您可以问我关于订单、菜品、配送等问题</text>
 
-        <view v-if="!isEscalated" class="quick-actions">
+        <view class="quick-actions">
           <view class="quick-btn" @click="quickSend('我的订单到哪了？')">
             📋 查我的订单
           </view>
@@ -101,8 +98,6 @@
 import { aiChatStream } from '../api/chatApi.js'
 import { agentBaseUrl } from '../api/env-chat.js'
 
-const WS_BASE = agentBaseUrl.replace(/^http/, 'ws')
-
 export default {
   data() {
     return {
@@ -114,9 +109,9 @@ export default {
       streamingText: '',
       streamingStatus: '',
       streamingMeta: null,
-      wsUser: null,
-      wsReconnectTimer: null,
+      pollTimer: null,
       isEscalated: false,
+      lastAgentMsgIndex: 0,
     }
   },
 
@@ -125,16 +120,13 @@ export default {
     this.sessionId = uni.getStorageSync('chat_session_id') || ('cs-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8))
     uni.setStorageSync('chat_session_id', this.sessionId)
 
-    // 先恢复历史消息
-    this.restoreHistory()
-
     if (prefill) {
       this.sendMessage(prefill)
     }
   },
 
   onUnload() {
-    this.disconnectWS()
+    this.stopPolling()
   },
 
   methods: {
@@ -149,162 +141,54 @@ export default {
       })
     },
 
-    // ── 历史恢复 ─────────────────────────────────────────
+    startPolling() {
+      if (this.pollTimer) return
+      this.isEscalated = true
+      this.pollTimer = setInterval(() => {
+        this.pollAgentReplies()
+      }, 3000)
+    },
 
-    async restoreHistory() {
-      const _this = this
+    stopPolling() {
+      if (this.pollTimer) {
+        clearInterval(this.pollTimer)
+        this.pollTimer = null
+      }
+    },
+
+    async pollAgentReplies() {
+      if (!this.sessionId || !this.isEscalated) return
       try {
         const res = await new Promise((resolve, reject) => {
           uni.request({
-            url: agentBaseUrl + '/api/history/' + this.sessionId,
+            url: agentBaseUrl + '/api/human-queue/' + this.sessionId + '/user-poll',
             method: 'GET',
+            data: { since: this.lastAgentMsgIndex },
             header: { 'authentication': uni.getStorageSync('token') || '' },
             success: (r) => resolve(r.data),
             fail: reject
           })
         })
+        if (res && res.status === 'resolved') {
+          this.stopPolling()
+          this.isEscalated = false
+          return
+        }
         if (res && res.messages && res.messages.length > 0) {
           for (const msg of res.messages) {
             this.messages.push({
-              role: msg.role === 'assistant' ? 'assistant' : 'user',
-              content: msg.content,
-              intent: ''
+              role: 'assistant',
+              content: '[人工客服] ' + msg.content,
+              intent: 'human_handoff'
             })
+            this.lastAgentMsgIndex++
           }
-          this.$nextTick(() => this.scrollToBottom())
-        }
-        // 根据 API 返回的 escalated 字段决定是否建 WebSocket
-        if (res && res.escalated) {
-          this.isEscalated = true
-          uni.setStorageSync('chat_escalated_' + this.sessionId, '1')
-          this.$nextTick(() => this.connectWS())
-        } else {
-          // 服务端说未升级，清除本地标记
-          this.isEscalated = false
-          uni.setStorageSync('chat_escalated_' + this.sessionId, '0')
+          this.scrollToBottom()
         }
       } catch (e) {
-        // 接口挂了：回退到本地标记
-        if (uni.getStorageSync('chat_escalated_' + this.sessionId) === '1') {
-          this.isEscalated = true
-          this.$nextTick(() => this.connectWS())
-        }
+        // silent poll
       }
     },
-
-    // ── WebSocket 实时通道 ──────────────────────────────────
-
-    connectWS() {
-      if (this.wsUser && this.wsUser.readyState === 1) return
-      this.isEscalated = true
-      uni.setStorageSync('chat_escalated_' + this.sessionId, '1')
-      this._closeOldWS()   // 只关旧连接，不重置 isEscalated
-
-      const url = WS_BASE + '/ws/user/' + this.sessionId
-      // #ifdef H5
-      this.wsUser = new WebSocket(url)
-      // #endif
-      // #ifndef H5
-      this.wsUser = uni.connectSocket({ url, complete: () => {} })
-      // #endif
-
-      this.wsUser.onopen = () => {
-        // 心跳
-        this._wsHeartbeat = setInterval(() => {
-          try { this.wsUser.send(JSON.stringify({ type: 'pong' })) } catch (e) {}
-        }, 25000)
-      }
-
-      this.wsUser.onmessage = (event) => {
-        try {
-          let data = event.data
-          // #ifdef H5
-          // data is already string
-          // #endif
-          // #ifndef H5
-          data = event.data
-          // #endif
-          if (typeof data === 'string') data = JSON.parse(data)
-          this.wsOnMessage(data)
-        } catch (e) {}
-      }
-
-      this.wsUser.onerror = () => {
-        this._scheduleReconnect()
-      }
-
-      this.wsUser.onclose = () => {
-        if (this._wsHeartbeat) clearInterval(this._wsHeartbeat)
-        this._scheduleReconnect()
-      }
-    },
-
-    _scheduleReconnect() {
-      if (this.wsReconnectTimer) return
-      if (!this.isEscalated) return
-      this.wsReconnectTimer = setTimeout(() => {
-        this.wsReconnectTimer = null
-        this.connectWS()
-      }, 3000)
-    },
-
-    _closeOldWS() {
-      // 只清理旧 WebSocket 连接，不重置 isEscalated
-      if (this._wsHeartbeat) { clearInterval(this._wsHeartbeat); this._wsHeartbeat = null }
-      if (this.wsReconnectTimer) { clearTimeout(this.wsReconnectTimer); this.wsReconnectTimer = null }
-      if (this.wsUser) {
-        try { this.wsUser.close() } catch (e) {}
-        this.wsUser = null
-      }
-    },
-
-    disconnectWS() {
-      this.isEscalated = false
-      uni.setStorageSync('chat_escalated_' + this.sessionId, '0')
-      this._closeOldWS()
-    },
-
-    wsOnMessage(data) {
-      if (!data || !data.type) return
-      switch (data.type) {
-        case 'agent_message':
-          this.messages.push({
-            role: 'assistant',
-            content: '[人工客服] ' + data.content,
-            intent: 'human_handoff'
-          })
-          this.scrollToBottom()
-          break
-        case 'resolved':
-        case 'session_resolved':
-          // 人工客服已结束，切回AI模式
-          this.disconnectWS()
-          break
-        case 'user_connected':
-          // heartbeats, ignore
-          break
-        case 'ping':
-          try { this.wsUser.send(JSON.stringify({ type: 'pong' })) } catch (e) {}
-          break
-      }
-    },
-
-    async sendWsMessage(text) {
-      // 先确保 WebSocket 连接
-      if (!this.wsUser || this.wsUser.readyState !== 1) {
-        this.connectWS()
-        // 等连接打开
-        await new Promise((resolve) => {
-          const check = setInterval(() => {
-            if (this.wsUser && this.wsUser.readyState === 1) { clearInterval(check); resolve() }
-          }, 100)
-          setTimeout(() => { clearInterval(check); resolve() }, 5000)
-        })
-      }
-      this.wsUser.send(JSON.stringify({ type: 'user_message', content: text }))
-    },
-
-    // ── 消息发送 ─────────────────────────────────────────
 
     sendMessage(prefillText) {
       const text = (typeof prefillText === 'string' && prefillText) ? prefillText : this.inputText.trim()
@@ -313,20 +197,12 @@ export default {
       this.messages.push({ role: 'user', content: text, intent: '' })
       if (!prefillText) this.inputText = ''
       this.loading = true
-      this.scrollToBottom()
-
-      const _this = this
-
-      // 已升级到人工：走 WebSocket，不发 SSE
-      if (this.isEscalated) {
-        this.sendWsMessage(text)
-        this.loading = false
-        return
-      }
-
       this.streamingText = ''
       this.streamingStatus = ''
       this.streamingMeta = null
+      this.scrollToBottom()
+
+      const _this = this
 
       aiChatStream({
         message: text,
@@ -345,10 +221,6 @@ export default {
 
         onMeta(meta) {
           _this.streamingMeta = meta
-          // 升级到人工客服 → 建立 WebSocket 实时通道
-          if (meta && meta.escalated) {
-            _this.connectWS()
-          }
         },
 
         onDone(fullText) {

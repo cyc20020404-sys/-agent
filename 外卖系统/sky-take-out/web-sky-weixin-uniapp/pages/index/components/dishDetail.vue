@@ -66,7 +66,7 @@
         v-for="(item, index) in dishMealData"
         :key="index"
       >
-        <image class="div_big_image" :src="item.image" mode=""></image>
+        <image class="div_big_image" :src="item.image" mode="aspectFill"></image>
         <view class="title">
           {{ item.name }}
           <text style="">X{{ item.copies }}</text>
@@ -154,83 +154,108 @@ export default {
 </script>
 <style lang="scss" scoped>
 .dish_detail_pop {
-  width: calc(100vw - 160rpx);
-  box-sizing: border-box;
-  position: relative;
+  position: absolute;
   top: 50%;
   left: 50%;
-  padding: 40rpx;
-  transform: translateX(-50%) translateY(-50%);
+  transform: translate(-50%, -50%);
+  width: 560rpx;
+  max-width: 90%;
+  padding: 36rpx;
   background: #fff;
   border-radius: 20rpx;
+  box-sizing: border-box;
+
   .div_big_image {
+    display: block;
     width: 100%;
-    height: 320rpx;
-    border-radius: 10rpx;
+    max-height: 300rpx;
+    border-radius: 12rpx;
   }
+
   .title {
-    font-size: 40rpx;
-    line-height: 80rpx;
+    font-size: 36rpx;
+    font-weight: 600;
+    color: #1A1A1A;
+    line-height: 64rpx;
     text-align: center;
-    font-weight: bold;
   }
+
+  .desc {
+    font-size: 24rpx;
+    color: #999;
+    text-align: center;
+    line-height: 34rpx;
+    margin-bottom: 8rpx;
+  }
+
   .dish_items {
-    height: 60vh;
+    max-height: 60vh;
+    overflow-y: auto;
   }
+
   .but_item {
     display: flex;
+    align-items: center;
     position: relative;
-    flex: 1;
+    margin-top: 20rpx;
+    min-height: 64rpx;
+
     .price {
-      text-align: left;
-      color: #e94e3c;
-      line-height: 88rpx;
-      box-sizing: border-box;
-      font-size: 48rpx;
-      font-weight: bold;
-      .ico {
-        font-size: 28rpx;
-      }
+      font-size: 44rpx;
+      font-weight: 600;
+      color: #E94E3C;
+      line-height: 64rpx;
+
+      .ico { font-size: 26rpx; }
     }
+
     .active {
       position: absolute;
-      right: 0rpx;
-      bottom: 20rpx;
+      right: 0;
+      bottom: 0;
       display: flex;
+      align-items: center;
+
       .dish_add,
       .dish_red {
         display: block;
-        width: 72rpx;
-        height: 72rpx;
+        width: 64rpx;
+        height: 64rpx;
       }
+
       .dish_number {
-        padding: 0 10rpx;
-        line-height: 72rpx;
-        font-size: 30rpx;
-        font-family: PingFangSC, PingFangSC-Medium;
-        font-weight: 500;
-      }
-      .dish_card_add {
-        width: 200rpx;
-        line-height: 60rpx;
-        text-align: center;
-        font-weight: 500;
+        padding: 0 8rpx;
+        line-height: 64rpx;
         font-size: 28rpx;
-        opacity: 1;
-        background: #ffc200;
-        border-radius: 30rpx;
+        font-weight: 600;
+        color: #1A1A1A;
+      }
+
+      .dish_card_add {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 176rpx;
+        height: 56rpx;
+        font-size: 26rpx;
+        font-weight: 600;
+        color: #1A1A1A;
+        background: #FFC200;
+        border-radius: 28rpx;
       }
     }
   }
 }
+
 .close {
   position: absolute;
-  bottom: -180rpx;
+  bottom: -150rpx;
   left: 50%;
   transform: translateX(-50%);
+
   .close_img {
-    width: 88rpx;
-    height: 88rpx;
+    width: 72rpx;
+    height: 72rpx;
   }
 }
 </style>

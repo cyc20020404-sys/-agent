@@ -220,7 +220,7 @@ export default {
     &::before {
       content: "";
       position: absolute;
-      width: 100vw;
+      width: 100%;
       height: 120rpx;
       z-index: 99;
       background: linear-gradient(
